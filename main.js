@@ -1,17 +1,37 @@
-import { Scene, WebGLRenderer, LineLoop, LineBasicMaterial, PerspectiveCamera, BufferGeometry, Vector3, Clock, MathUtils, Euler, Raycaster, BoxHelper, Sphere, Box3, Line } from "three"
-import cannonEs from "cannonEs"
+import { Scene, WebGLRenderer, LineLoop, LineBasicMaterial, BufferGeometry, Vector3, Clock, MathUtils, Euler, Sphere, Line, OrthographicCamera, Object3D } from "three"
 import WebGL from "three/addons/capabilities/WebGL.js"
+
+/**
+ * @author https://discourse.threejs.org/t/getobject-by-any-custom-property-present-in-userdata-of-object/3378/2#post_2
+ * Modified by @JakeDEsposito
+ */
+Object3D.prototype.getObjectsByUserDataProperty = function (name, value) {
+    if (this.userData[name] === value)
+        return this
+
+    const objects = []
+
+    for (var i = 0, l = this.children.length; i < l; i++) {
+        var child = this.children[i]
+        var object = child.getObjectsByUserDataProperty(name, value)
+
+        if (object !== undefined && object.length !== 0) {
+            objects.push(object)
+        }
+    }
+
+    return objects
+}
 
 const { randFloat } = MathUtils
 
 const scene = new Scene()
-// TODO: Change to orthographic camera
-const camera = new PerspectiveCamera(75, 1, 0.1, 1000)
+const camera = new OrthographicCamera(-10, 10, 10, -10, 0.001)
 
 const renderer = new WebGLRenderer()
 renderer.setSize(640, 640)
 
-const geometry = new BufferGeometry().setFromPoints([
+const g_ship = new BufferGeometry().setFromPoints([
     new Vector3(0, 1),
     new Vector3(-.8, -1),
     new Vector3(-.3, -.6),
@@ -19,14 +39,11 @@ const geometry = new BufferGeometry().setFromPoints([
     new Vector3(.8, -1),
 ])
 
-const material = new LineBasicMaterial({ color: 0x00ff00 })
-const ship = new LineLoop(geometry, material)
-// TODO: Add plane to represent ship
-scene.add(ship)
+const m_green = new LineBasicMaterial({ color: 0x00ff00 })
+// const ship = new LineLoop(g_ship, m_green)
+// scene.add(ship)
 
-camera.position.z = 5
-
-ship.geometry.computeBoundingBox()
+camera.position.z = 0.001
 
 /**
  * Handles key press events.
@@ -55,17 +72,103 @@ class KeyHandler {
     isKeyPressed = (key) => !!this.#keysPressed[key]
 }
 
-class Physical {
-
+class Physical extends LineLoop {
+    _velocity = new Vector3()
+    _health = 3
 }
 
 class Ship extends Physical {
+    #rotateSpeed = 2.5
+    #fireCooldownCounter = 0
 
+    #fireCooldown = 0.2
+
+    #movement(dt) {
+        const vector = new Vector3()
+        if (keyHandler.isKeyPressed("w"))
+            vector.set(0, 1, 0).applyEuler(this.rotation).multiplyScalar(0.1)
+        else
+            vector.set(0, 0, 0)
+
+        if (keyHandler.isKeyPressed("a"))
+            this.rotation.z += this.#rotateSpeed * dt
+        if (keyHandler.isKeyPressed("d"))
+            this.rotation.z -= this.#rotateSpeed * dt
+
+        this.position.setZ(0)
+
+        this._velocity.addScaledVector(vector, dt)
+
+        this.position.add(this._velocity, dt)
+    }
+
+    #fire() {
+        const bullet = new Bullet(g_bullet, m_green)
+
+        bullet.position.copy(this.position)
+        bullet.rotation.copy(this.rotation)
+
+        bullet._velocity = new Vector3(0, Bullet.BULLET_SPEED)
+        bullet._velocity.applyEuler(this.rotation)
+        bullet._velocity.add(this._velocity)
+
+        scene.add(bullet)
+    }
+
+    update(dt) {
+        this.#movement(dt)
+
+        this.#fireCooldownCounter += dt
+
+        if (this.#fireCooldownCounter > this.#fireCooldown && keyHandler.isKeyPressed(" ")) {
+            this.#fire()
+            this.#fireCooldownCounter = 0
+        }
+    }
 }
 
 class Asteroid extends Physical {
 
 }
+
+class Bullet extends Physical {
+    lifeTimer = 20
+
+    static BULLET_SPEED = 0.5
+
+    constructor(geometry, material) {
+        super(geometry, material)
+
+        this.userData = {
+            type: "bullet"
+        }
+    }
+
+    #movement(dt) {
+        const vector = new Vector3()
+
+        this.position.setZ(0)
+
+        this._velocity.addScaledVector(vector, dt)
+
+        this.position.add(this._velocity, dt)
+    }
+
+    update(dt) {
+        this.#movement(dt)
+
+        this.lifeTimer -= dt
+
+        if (this.lifeTimer <= 0) {
+            scene.remove(this)
+            // No need to dispose because geometry is reused for other bullets.
+            // this.dispose()
+        }
+    }
+}
+
+const test = new Ship(g_ship, m_green)
+
 
 function asteroidVertices(x, y) {
     const { sin, cos, PI } = Math
@@ -215,15 +318,15 @@ collision.isIntersectionSphereTriangle = function (sphere, a, b, c, normal) {
 
 };
 
-const g = new BufferGeometry().setFromPoints(asteroidVertices(0, 0))
-const a = new LineLoop(g, material)
-scene.add(a)
+const g_asteroid = new BufferGeometry().setFromPoints(asteroidVertices(0, 0))
+const asteroid = new LineLoop(g_asteroid, m_green)
+scene.add(asteroid)
 
 const g_bullet = new BufferGeometry().setFromPoints([
-    new Vector3(0, 0.2),
+    new Vector3(0, 0.8),
     new Vector3(),
 ])
-const l_bullet = new Line(g_bullet, material)
+const l_bullet = new Line(g_bullet, m_green)
 scene.add(l_bullet)
 
 // const bulletBoxHelper = new BoxHelper(l_bullet, 0xffffff)
@@ -232,70 +335,80 @@ scene.add(l_bullet)
 const keyHandler = new KeyHandler()
 
 const clock = new Clock(true)
+let cameraLerpCounter = 0
 
 const vector = new Vector3()
 const velocity = new Vector3()
 
 const rotateSpeed = 2.5
 
+const ship = new Ship(g_ship, m_green)
+scene.add(ship)
+
 function animate() {
     requestAnimationFrame(animate)
 
     const dt = clock.getDelta()
 
-    // Ship Movement
-    if (keyHandler.isKeyPressed("w"))
-        vector.set(0, 1, 0).applyEuler(ship.rotation).multiplyScalar(0.1)
-    else
-        vector.set(0, 0, 0)
+    ship.update(dt)
 
-    if (keyHandler.isKeyPressed("a"))
-        ship.rotation.z += rotateSpeed * dt
-    if (keyHandler.isKeyPressed("d"))
-        ship.rotation.z -= rotateSpeed * dt
+    const bullets = scene.getObjectsByUserDataProperty("type", "bullet")
 
-    ship.position.z = 0
+    for (const bullet of bullets) {
+        bullet.update(dt)
+    }
 
-    velocity.addScaledVector(vector, dt)
-
-    ship.position.add(velocity)
-    // Ship Movement END
+    // TODO: Create asteroid spawning system.
 
     // Ship HIT Asteroid Detection
-    const gclone = geometry.clone()
+    const gclone = g_ship.clone()
 
     const worldPos = gclone.applyMatrix4(ship.matrixWorld)
 
-    a.geometry.computeBoundingSphere()
+    asteroid.geometry.computeBoundingSphere()
 
     const arr = worldPos.attributes.position.array
 
     worldPos.dispose()
 
+    asteroid.geometry.boundingSphere.applyMatrix4(asteroid.matrixWorld)
+
+    // TODO: Get collisions with asteroids - ships and asteroids - bullets working.
     const trianglePoints = [
         new Vector3(arr[0], arr[1], arr[2]),
         new Vector3(arr[3], arr[4], arr[5]),
         new Vector3(arr[12], arr[13], arr[14]),
     ]
     const c = collision.isIntersectionSphereTriangle(
-        // FIXME: Position offset needs to be taken into account for the asteroid bounding sphere.
-        a.geometry.boundingSphere,
+        asteroid.geometry.boundingSphere,
         trianglePoints[0],
         trianglePoints[1],
         trianglePoints[2],
         new Vector3(0, 0, 1)
     )
-    const some = trianglePoints.some((point) => a.geometry.boundingSphere.containsPoint(point))
+    const some = trianglePoints.some((point) => asteroid.geometry.boundingSphere.containsPoint(point))
+
+    // console.log(a.geometry.boundingSphere)
 
     // console.log(!!c || some)
     // Ship HIT Asteroid Detection END
 
+    // if (ship.position.distanceTo(camera.position) > 4 || cameraLerpCounter < 1) {
+    //     cameraLerpCounter += dt
+    //     // const t = cameraLerpClock.getElapsedTime()
+    //     camera.position.lerp(ship.position, cameraLerpCounter)
+    //     // camera.position.copy(ship.position)
+    //     if (cameraLerpCounter > 1)
+    //     cameraLerpCounter = 0
+    // }
+    // TODO: Get nicer camera movement working.
+    camera.position.copy(ship.position)
 
+    camera.position.z = 0.001
 
-    
-    l_bullet.geometry.computeBoundingBox()
+    // l_bullet.geometry.computeBoundingBox()
 
-    const collish = a.geometry.boundingSphere.intersectsBox(l_bullet.geometry.boundingBox)
+    // const collish = a.geometry.boundingSphere.intersectsBox(l_bullet.geometry.boundingBox)
 
     // console.log(collish)
 
