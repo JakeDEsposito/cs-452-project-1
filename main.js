@@ -1,5 +1,19 @@
-import { Scene, WebGLRenderer, LineLoop, LineBasicMaterial, BufferGeometry, Vector3, Clock, MathUtils, Euler, Sphere, Line, OrthographicCamera, Object3D } from "three"
+import { Scene, WebGLRenderer, LineLoop, LineBasicMaterial, BufferGeometry, Vector3, Clock, MathUtils, Euler, Sphere, Line, OrthographicCamera, Object3D, PerspectiveCamera } from "three"
+
 import WebGL from "three/addons/capabilities/WebGL.js"
+
+import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js"
+import { RenderPass } from "three/addons/postprocessing/RenderPass.js"
+import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js"
+import { FilmShader } from "./shaders/FilmShader.js"
+import { BadTVShader } from "./shaders/BadTVShader.js"
+import { StaticShader } from "./shaders/StaticShader.js"
+
+//import { World, Body, Sphere as CannonSphere, Trimesh } from "rapier2d"
+
+import { init, World, RigidBodyDesc, ColliderDesc } from "@dimforge/rapier2d"
+
+await init()
 
 /**
  * @author https://discourse.threejs.org/t/getobject-by-any-custom-property-present-in-userdata-of-object/3378/2#post_2
@@ -26,10 +40,40 @@ Object3D.prototype.getObjectsByUserDataProperty = function (name, value) {
 const { randFloat } = MathUtils
 
 const scene = new Scene()
-const camera = new OrthographicCamera(-10, 10, 10, -10, 0.001)
+const camera = new OrthographicCamera(-10, 10, 10, -10, 0)
+
+camera.frustumCulled = false
+camera.updateProjectionMatrix()
 
 const renderer = new WebGLRenderer()
 renderer.setSize(640, 640)
+
+const composer = new EffectComposer(renderer)
+
+const renderPass = new RenderPass(scene, camera)
+composer.addPass(renderPass)
+
+const FilmPass = new ShaderPass(FilmShader)
+composer.addPass(FilmPass)
+
+FilmPass.uniforms.grayscale.value = 0
+FilmPass.uniforms["sCount"].value = 800
+FilmPass.uniforms["sIntensity"].value = 1.2
+FilmPass.uniforms["nIntensity"].value = 0.4
+
+const BadTVPass = new ShaderPass(BadTVShader)
+composer.addPass(BadTVPass)
+
+BadTVPass.uniforms["distortion"].value = 2
+BadTVPass.uniforms["distortion2"].value = 1.6
+BadTVPass.uniforms["speed"].value = 0.06
+BadTVPass.uniforms["rollSpeed"].value = 0
+
+const StaticPass = new ShaderPass(StaticShader)
+composer.addPass(StaticPass)
+
+StaticPass.uniforms["amount"].value = 0.01
+StaticPass.uniforms["size"].value = 4
 
 const g_ship = new BufferGeometry().setFromPoints([
     new Vector3(0, 1),
@@ -43,7 +87,7 @@ const m_green = new LineBasicMaterial({ color: 0x00ff00 })
 // const ship = new LineLoop(g_ship, m_green)
 // scene.add(ship)
 
-camera.position.z = 0.001
+camera.position.z = 1
 
 /**
  * Handles key press events.
@@ -72,16 +116,44 @@ class KeyHandler {
     isKeyPressed = (key) => !!this.#keysPressed[key]
 }
 
+const world = new World({ x: 0, y: 0 })
+
 class Physical extends LineLoop {
+    _collider;
+    _rigidBody;
+
     _velocity = new Vector3()
     _health = 3
 }
 
 class Ship extends Physical {
     #rotateSpeed = 2.5
-    #fireCooldownCounter = 0
 
+    #canFire = true
     #fireCooldown = 0.2
+
+    constructor(geometry, material) {
+        super(geometry, material)
+
+        // world.addBody(new Trimesh([
+        //     new Vector3(0, 1),
+        //     new Vector3(-.8, -1),
+        //     new Vector3(.8, -1),
+        // ], [0, 1, 2]))
+
+        this._rigidBody = world.createRigidBody(RigidBodyDesc.dynamic())
+        // this._rigidBody.resetForces(true)
+
+        // this._collider = world.createCollider(ColliderDesc.triangle(
+        //     new Vector3(0, 1),
+        //     new Vector3(-.8, -1),
+        //     new Vector3(.8, -1)
+        // ), this._rigidBody)
+
+        this._rigidBody.addForce({ x: 1, y: 0}, true)
+
+        console.log(this._collider)
+    }
 
     #movement(dt) {
         const vector = new Vector3()
@@ -99,11 +171,13 @@ class Ship extends Physical {
 
         this._velocity.addScaledVector(vector, dt)
 
-        this.position.add(this._velocity, dt)
+        console.log(this._rigidBody)
+
+        // this.position.add(this._velocity, dt)
     }
 
     #fire() {
-        const bullet = new Bullet(g_bullet, m_green)
+        const bullet = new Bullet(m_green)
 
         bullet.position.copy(this.position)
         bullet.rotation.copy(this.rotation)
@@ -118,17 +192,74 @@ class Ship extends Physical {
     update(dt) {
         this.#movement(dt)
 
-        this.#fireCooldownCounter += dt
-
-        if (this.#fireCooldownCounter > this.#fireCooldown && keyHandler.isKeyPressed(" ")) {
+        if (this.#canFire && keyHandler.isKeyPressed(" ")) {
             this.#fire()
-            this.#fireCooldownCounter = 0
+
+            this.#canFire = false
+            setTimeout(() => this.#canFire = true, this.#fireCooldown * 1000)
         }
     }
 }
 
-class Asteroid extends Physical {
+const ASTEROIDS_CAP = 10
+const ASTEROIDS_MAX_DISTANCE_FROM_PLAYER = 25
 
+class Asteroid extends Physical {
+    constructor(material) {
+        const { sin, cos, PI } = Math
+
+        const resolution = 12
+
+        const angleStep = PI * 2 / resolution
+
+        const vertices = []
+
+        for (let i = 0; i < resolution; i++) {
+            const theta = i * angleStep
+
+            // const vertex = new Vector3((cos(theta) + x), sin(theta) + y, 0)
+            const vertex = new Vector3((cos(theta)), sin(theta), 0)
+
+            if (i % 3 === 0) {
+                const e = new Euler(0, 0, theta)
+
+                // x controls depth of crater.
+                // y controls shift of crater.
+                const v = new Vector3(randFloat(0.2, 0.5), randFloat(-0.4, 0.4), 0)
+
+                vertex.sub(v.applyEuler(e))
+            }
+
+            vertices.push(vertex)
+        }
+
+        super(new BufferGeometry().setFromPoints(vertices), material)
+
+        this.userData = {
+            type: "asteroid"
+        }
+
+        this.geometry.computeBoundingSphere()
+
+        // const body = new Body({
+        //     mass: 1,
+        //     shape: new CannonSphere(1)
+        // })
+
+        // world.addBody(body)
+    }
+
+    #movement(dt) {
+        this.position.add(this._velocity, dt)
+    }
+
+    update(dt) {
+        this.#movement(dt)
+    }
+
+    // TODO: Make hit and kill system for asteroids.
+    // The asteroids should split into 4 smaller asteroids that shoot out in 4 different directions when a big asteroid is killed.
+    // Small asteroids just disapear when killed.
 }
 
 class Bullet extends Physical {
@@ -136,8 +267,11 @@ class Bullet extends Physical {
 
     static BULLET_SPEED = 0.5
 
-    constructor(geometry, material) {
-        super(geometry, material)
+    constructor(material) {
+        super(new BufferGeometry().setFromPoints([
+            new Vector3(0, 0.8),
+            new Vector3(),
+        ]), material)
 
         this.userData = {
             type: "bullet"
@@ -165,39 +299,6 @@ class Bullet extends Physical {
             // this.dispose()
         }
     }
-}
-
-const test = new Ship(g_ship, m_green)
-
-
-function asteroidVertices(x, y) {
-    const { sin, cos, PI } = Math
-
-    const resolution = 12
-
-    const angleStep = PI * 2 / resolution
-
-    const vertices = []
-
-    for (let i = 0; i < resolution; i++) {
-        const theta = i * angleStep
-
-        const vertex = new Vector3((cos(theta) + x), sin(theta) + y, 0)
-
-        if (i % 3 === 0) {
-            const e = new Euler(0, 0, theta)
-
-            // x controls depth of crater.
-            // y controls shift of crater.
-            const v = new Vector3(randFloat(0.2, 0.5), randFloat(-0.4, 0.4), 0)
-
-            vertex.sub(v.applyEuler(e))
-        }
-
-        vertices.push(vertex)
-    }
-
-    return vertices
 }
 
 const collision = {}
@@ -318,29 +419,15 @@ collision.isIntersectionSphereTriangle = function (sphere, a, b, c, normal) {
 
 };
 
-const g_asteroid = new BufferGeometry().setFromPoints(asteroidVertices(0, 0))
-const asteroid = new LineLoop(g_asteroid, m_green)
-scene.add(asteroid)
+const { PI } = Math
 
-const g_bullet = new BufferGeometry().setFromPoints([
-    new Vector3(0, 0.8),
-    new Vector3(),
-])
-const l_bullet = new Line(g_bullet, m_green)
-scene.add(l_bullet)
-
-// const bulletBoxHelper = new BoxHelper(l_bullet, 0xffffff)
-// scene.add(bulletBoxHelper)
+// const g_asteroid = new BufferGeometry().setFromPoints(vertices)
+// const a = new LineLoop(g_asteroid, m_green)
+// scene.add(a)
 
 const keyHandler = new KeyHandler()
 
 const clock = new Clock(true)
-let cameraLerpCounter = 0
-
-const vector = new Vector3()
-const velocity = new Vector3()
-
-const rotateSpeed = 2.5
 
 const ship = new Ship(g_ship, m_green)
 scene.add(ship)
@@ -350,8 +437,11 @@ function animate() {
 
     const dt = clock.getDelta()
 
+    world.step()
+
     ship.update(dt)
 
+    /** @type {Bullet[]} */
     const bullets = scene.getObjectsByUserDataProperty("type", "bullet")
 
     for (const bullet of bullets) {
@@ -360,7 +450,58 @@ function animate() {
 
     // TODO: Create asteroid spawning system.
 
+    const shipDir = ship._velocity.clone().normalize()
+
+    /** @type {Asteroid[]} */
+    const asteroids = scene.getObjectsByUserDataProperty("type", "asteroid")
+
+    // asteroids that are 25 to 30 away should be removed.
+    // asteroids should spawn in 20 away and be given a random direction
+
+    // TODO: Need to work on this spawning system.
+    for (let i = 0; i < ASTEROIDS_CAP - asteroids.length; i++) {
+        // Do a different spawning method for when the ship is at 0, 0.
+
+        const a = new Asteroid(m_green)
+
+        a.position.copy(shipDir).multiplyScalar(20).add(ship.position)
+
+        const e = new Euler(0, 0, randFloat(0, 2 * PI))
+
+        a._velocity.setX(randFloat(0.01, 0.05)).applyEuler(e)
+
+        scene.add(a)
+    }
+
+    // FIXME: Asteroid is removed from scene but not from asteroids array so it is needlessly updated.
+    // This is not the biggest issue as the game will run fine even with these extra calculations.
+    // But, this could be a area to gain some performance, even if its minimal.
+    asteroids
+        .filter(({ position }) => ship.position.distanceTo(position) > ASTEROIDS_MAX_DISTANCE_FROM_PLAYER)
+        .forEach((asteroid) => scene.remove(asteroid))
+
+    for (const asteroid of asteroids) {
+        asteroid.update(dt)
+
+        // for (const bullet of bullets) {
+
+
+        //     // asteroid.geometry.bounding
+        // }
+
+        // const isColliding = collision.isIntersectionSphereTriangle(
+
+        // )
+    }
+
+    // console.log(shipDir.multiplyScalar(20).add(ship.position))
+
+    // console.log(asteroid.position)
+
+    // asteroid.position.y = 10
+
     // Ship HIT Asteroid Detection
+    /*
     const gclone = g_ship.clone()
 
     const worldPos = gclone.applyMatrix4(ship.matrixWorld)
@@ -370,7 +511,7 @@ function animate() {
     const arr = worldPos.attributes.position.array
 
     worldPos.dispose()
-
+    // BUG: Applying the matrix in this way causes the asteroid to pop in and out. Do it a different way.
     asteroid.geometry.boundingSphere.applyMatrix4(asteroid.matrixWorld)
 
     // TODO: Get collisions with asteroids - ships and asteroids - bullets working.
@@ -391,6 +532,7 @@ function animate() {
     // console.log(a.geometry.boundingSphere)
 
     // console.log(!!c || some)
+    */
     // Ship HIT Asteroid Detection END
 
     // if (ship.position.distanceTo(camera.position) > 4 || cameraLerpCounter < 1) {
@@ -417,6 +559,11 @@ function animate() {
 
 
     renderer.render(scene, camera)
+
+    // FilmPass.uniforms["time"].value += dt
+    // BadTVPass.uniforms["time"].value += dt
+    // StaticPass.uniforms["time"].value += dt
+    // composer.render(dt)
 }
 
 if (WebGL.isWebGLAvailable()) {
