@@ -1,4 +1,4 @@
-import { Scene, WebGLRenderer, LineLoop, LineBasicMaterial, BufferGeometry, Vector3, Clock, MathUtils, Euler, Sphere, Line, OrthographicCamera, Object3D, PerspectiveCamera } from "three"
+import { Scene, WebGLRenderer, LineLoop, LineBasicMaterial, BufferGeometry, Vector2, Vector3, Clock, MathUtils, Euler, Sphere, Line, OrthographicCamera, Object3D, PerspectiveCamera, BufferAttribute } from "three"
 
 import WebGL from "three/addons/capabilities/WebGL.js"
 
@@ -37,7 +37,24 @@ Object3D.prototype.getObjectsByUserDataProperty = function (name, value) {
     return objects
 }
 
-const { randFloat } = MathUtils
+Object3D.prototype.getObjectsByUserDataName = function (name) {
+    if (this.userData[name] !== undefined)
+        return this
+
+    const objects = []
+
+    for (let i = 0, l = this.children.length; i < l; i++) {
+        const child = this.children[i]
+        const object = child.getObjectsByUserDataName(name)
+
+        if (object !== undefined && object.length !== 0)
+            objects.push(object)
+    }
+
+    return objects
+}
+
+const { randFloat, randInt } = MathUtils
 
 const scene = new Scene()
 const camera = new OrthographicCamera(-10, 10, 10, -10, 0)
@@ -122,8 +139,39 @@ class Physical extends LineLoop {
     _collider;
     _rigidBody;
 
-    _velocity = new Vector3()
     _health = 3
+
+    #damageGracePeriod = 5
+    #invulnerable = (() => {
+        setTimeout(() => this.#invulnerable = false, this.#damageGracePeriod * 1000)
+        return true
+    })()
+
+    _isDisposed = false
+
+    takeHit() {
+        // TODO: Make flashing material to show that the object is invulnerable.
+
+        if (!this.#invulnerable) {
+            this._health--
+
+            if (this._health <= 0) {
+                this.dispose()
+            }
+
+            this.#invulnerable = true
+            setTimeout(() => this.#invulnerable = false, this.#damageGracePeriod * 1000)
+        }
+
+    }
+
+    dispose() {
+        this._isDisposed = true
+
+        world.removeCollider(this._collider)
+        world.removeRigidBody(this._rigidBody)
+        scene.remove(this)
+    }
 }
 
 class Ship extends Physical {
@@ -135,56 +183,52 @@ class Ship extends Physical {
     constructor(geometry, material) {
         super(geometry, material)
 
-        // world.addBody(new Trimesh([
-        //     new Vector3(0, 1),
-        //     new Vector3(-.8, -1),
-        //     new Vector3(.8, -1),
-        // ], [0, 1, 2]))
-
         this._rigidBody = world.createRigidBody(RigidBodyDesc.dynamic())
-        // this._rigidBody.resetForces(true)
+        this._rigidBody.setAdditionalMass(0.1) // TODO: Adjust mass.
 
-        // this._collider = world.createCollider(ColliderDesc.triangle(
-        //     new Vector3(0, 1),
-        //     new Vector3(-.8, -1),
-        //     new Vector3(.8, -1)
-        // ), this._rigidBody)
+        this._collider = world.createCollider(ColliderDesc.triangle(
+            new Vector3(0, 1),
+            new Vector3(-.8, -1),
+            new Vector3(.8, -1)
+        ), this._rigidBody)
+        // this._collider.isSensor(true)
 
-        this._rigidBody.addForce({ x: 1, y: 0}, true)
-
-        console.log(this._collider)
+        this.userData = {
+            type: "ship",
+            rigidBodyHandle: this._rigidBody.handle,
+            colliderHandle: this._collider.handle,
+        }
     }
 
     #movement(dt) {
-        const vector = new Vector3()
+        const { cos, sin } = Math
+
         if (keyHandler.isKeyPressed("w"))
-            vector.set(0, 1, 0).applyEuler(this.rotation).multiplyScalar(0.1)
-        else
-            vector.set(0, 0, 0)
+            this._rigidBody.applyImpulse(new Vector2(-sin(this.rotation.z), cos(this.rotation.z)).multiplyScalar(0.2))
 
         if (keyHandler.isKeyPressed("a"))
             this.rotation.z += this.#rotateSpeed * dt
         if (keyHandler.isKeyPressed("d"))
             this.rotation.z -= this.#rotateSpeed * dt
 
-        this.position.setZ(0)
+        const { x, y } = this._rigidBody.translation()
+        this.position.set(x, y, 0)
 
-        this._velocity.addScaledVector(vector, dt)
-
-        console.log(this._rigidBody)
-
-        // this.position.add(this._velocity, dt)
+        this._rigidBody.setRotation(this.rotation.z, true)
     }
 
     #fire() {
         const bullet = new Bullet(m_green)
 
-        bullet.position.copy(this.position)
-        bullet.rotation.copy(this.rotation)
+        bullet._rigidBody.setRotation(this.rotation.z)
+        bullet._rigidBody.setTranslation(this.position.clone().add(new Vector3(0, 1, 0).applyEuler(this.rotation)))
 
-        bullet._velocity = new Vector3(0, Bullet.BULLET_SPEED)
-        bullet._velocity.applyEuler(this.rotation)
-        bullet._velocity.add(this._velocity)
+        bullet._rigidBody.setLinvel(this._rigidBody.linvel())
+
+        const { cos, sin } = Math
+
+        // FIXME: Need to find a better way to apply the initial force to the bullet to get it going.
+        bullet._rigidBody.addForce(new Vector2(-sin(this.rotation.z), cos(this.rotation.z)).multiplyScalar(Bullet.BULLET_SPEED))
 
         scene.add(bullet)
     }
@@ -198,14 +242,26 @@ class Ship extends Physical {
             this.#canFire = false
             setTimeout(() => this.#canFire = true, this.#fireCooldown * 1000)
         }
+
+        // console.log(this.position)
+    }
+
+    takeHit() {
+        // TODO: Write code for this.
+        console.log("Ship hit")
     }
 }
 
-const ASTEROIDS_CAP = 10
+const ASTEROIDS_CAP = 1//0
 const ASTEROIDS_MAX_DISTANCE_FROM_PLAYER = 25
 
 class Asteroid extends Physical {
+    #asteroidSize
+
     constructor(material) {
+        // TODO: Use size to make bigger or smaller asteroids
+        const size = randInt(1, 2)
+
         const { sin, cos, PI } = Math
 
         const resolution = 12
@@ -216,8 +272,6 @@ class Asteroid extends Physical {
 
         for (let i = 0; i < resolution; i++) {
             const theta = i * angleStep
-
-            // const vertex = new Vector3((cos(theta) + x), sin(theta) + y, 0)
             const vertex = new Vector3((cos(theta)), sin(theta), 0)
 
             if (i % 3 === 0) {
@@ -235,26 +289,65 @@ class Asteroid extends Physical {
 
         super(new BufferGeometry().setFromPoints(vertices), material)
 
+        this.geometry.scale(size, size, size)
+        // this.updateMatrix()
+
+        this.#asteroidSize = size
+
+        this._rigidBody = world.createRigidBody(RigidBodyDesc.dynamic())
+        this._rigidBody.setAdditionalMass(size) // TODO: Adjust mass.
+
+        this._collider = world.createCollider(
+            ColliderDesc.ball(size),
+            this._rigidBody
+        )
+
         this.userData = {
-            type: "asteroid"
+            type: "asteroid",
+            rigidBodyHandle: this._rigidBody.handle,
+            colliderHandle: this._collider.handle,
         }
 
-        this.geometry.computeBoundingSphere()
-
-        // const body = new Body({
-        //     mass: 1,
-        //     shape: new CannonSphere(1)
-        // })
-
-        // world.addBody(body)
+        this._health = 1
     }
 
-    #movement(dt) {
-        this.position.add(this._velocity, dt)
+    #movement() {
+        const { x, y } = this._rigidBody.translation()
+        this.position.set(x, y, 0)
+
+        this.rotation.z = this._rigidBody.rotation()
     }
 
     update(dt) {
-        this.#movement(dt)
+        this.#movement()
+    }
+
+    takeHit() {
+        super.takeHit()
+
+        const { cos, sin } = Math
+
+        if (this._health <= 0) {
+            // TODO: Spawn new asteroids
+
+            const count = randInt(1, 4)
+            const angleStep = PI * 2 / count
+
+            for (let i = 0; i < count; i++) {
+                const theta = i * angleStep
+                const pos = new Vector3((cos(theta)), sin(theta), 0)
+
+                const e = new Euler(0, 0, theta)
+
+                const a = new Asteroid(this.material)
+
+                // TODO: Spawn asteroids in circle around center of destroyed asteroid.
+
+                a._rigidBody.setTranslation(pos)
+
+                scene.add(a)
+            }
+        }
     }
 
     // TODO: Make hit and kill system for asteroids.
@@ -263,9 +356,9 @@ class Asteroid extends Physical {
 }
 
 class Bullet extends Physical {
-    lifeTimer = 20
+    #aliveFor = 2//0
 
-    static BULLET_SPEED = 0.5
+    static BULLET_SPEED = 200
 
     constructor(material) {
         super(new BufferGeometry().setFromPoints([
@@ -273,151 +366,47 @@ class Bullet extends Physical {
             new Vector3(),
         ]), material)
 
+        this._rigidBody = world.createRigidBody(RigidBodyDesc.dynamic())
+        this._rigidBody.setAdditionalMass(1) // TODO: Adjust mass.
+
+        this._collider = world.createCollider(
+            ColliderDesc.segment(
+                new Vector3(0, 0.8),
+                new Vector3()
+            ),
+            this._rigidBody
+        )
+        this._collider.isSensor(true)
+
         this.userData = {
-            type: "bullet"
+            type: "bullet",
+            rigidBodyHandle: this._rigidBody.handle,
+            colliderHandle: this._collider.handle,
         }
+
+        this._health = 1
+
+        setTimeout(() => {
+            if (!this._isDisposed)
+                this.dispose()
+        }, this.#aliveFor * 1000)
     }
 
-    #movement(dt) {
-        const vector = new Vector3()
+    #movement() {
+        const { x, y } = this._rigidBody.translation()
+        this.position.set(x, y, 0)
 
-        this.position.setZ(0)
-
-        this._velocity.addScaledVector(vector, dt)
-
-        this.position.add(this._velocity, dt)
+        this.rotation.z = this._rigidBody.rotation()
     }
 
     update(dt) {
-        this.#movement(dt)
+        this.#movement()
 
-        this.lifeTimer -= dt
-
-        if (this.lifeTimer <= 0) {
-            scene.remove(this)
-            // No need to dispose because geometry is reused for other bullets.
-            // this.dispose()
-        }
+        // world.contactsWith(this._collider, otherCollider => {
+        //     console.log(otherCollider)
+        // })
     }
 }
-
-const collision = {}
-
-/** 
- * Based on http://realtimecollisiondetection.net/blog/?p=103
- * @param {Sphere} sphere 
- * @param {Vector3} a vertex of a triangle
- * @param {Vector3} b vertex of a triangle
- * @param {Vector3} c vertex of a triangle
- * @param {Vector3} normal normal of a triangle
- * @returns 
- * @author https://gist.github.com/yomotsu/d845f21e2e1eb49f647f
- */
-collision.isIntersectionSphereTriangle = function (sphere, a, b, c, normal) {
-
-    // vs plane of traiangle face
-    var A = new Vector3(),
-        B = new Vector3(),
-        C = new Vector3(),
-        rr,
-        V = new Vector3(),
-        d,
-        e;
-
-    A.subVectors(a, sphere.center);
-    B.subVectors(b, sphere.center);
-    C.subVectors(c, sphere.center);
-    rr = sphere.radius * sphere.radius;
-    V.crossVectors(B.clone().sub(A), C.clone().sub(A));
-    d = A.dot(V);
-    e = V.dot(V);
-
-    if (d * d > rr * e) {
-
-        return false;
-
-    }
-
-    // vs triangle vertex
-    var aa,
-        ab,
-        ac,
-        bb,
-        bc,
-        cc;
-
-    aa = A.dot(A);
-    ab = A.dot(B);
-    ac = A.dot(C);
-    bb = B.dot(B);
-    bc = B.dot(C);
-    cc = C.dot(C);
-
-    if (
-        (aa > rr) & (ab > aa) & (ac > aa) ||
-        (bb > rr) & (ab > bb) & (bc > bb) ||
-        (cc > rr) & (ac > cc) & (bc > cc)
-    ) {
-
-        return false;
-
-    }
-
-    // vs edge
-    var AB = new Vector3(),
-        BC = new Vector3(),
-        CA = new Vector3(),
-        d1,
-        d2,
-        d3,
-        e1,
-        e2,
-        e3,
-        Q1 = new Vector3(),
-        Q2 = new Vector3(),
-        Q3 = new Vector3(),
-        QC = new Vector3(),
-        QA = new Vector3(),
-        QB = new Vector3();
-
-    AB.subVectors(B, A);
-    BC.subVectors(C, B);
-    CA.subVectors(A, C);
-    d1 = ab - aa;
-    d2 = bc - bb;
-    d3 = ac - cc;
-    e1 = AB.dot(AB);
-    e2 = BC.dot(BC);
-    e3 = CA.dot(CA);
-    Q1.subVectors(A.multiplyScalar(e1), AB.multiplyScalar(d1));
-    Q2.subVectors(B.multiplyScalar(e2), BC.multiplyScalar(d2));
-    Q3.subVectors(C.multiplyScalar(e3), CA.multiplyScalar(d3));
-    QC.subVectors(C.multiplyScalar(e1), Q1);
-    QA.subVectors(A.multiplyScalar(e2), Q2);
-    QB.subVectors(B.multiplyScalar(e3), Q3);
-
-    if (
-        (Q1.dot(Q1) > rr * e1 * e1) && (Q1.dot(QC) >= 0) ||
-        (Q2.dot(Q2) > rr * e2 * e2) && (Q2.dot(QA) >= 0) ||
-        (Q3.dot(Q3) > rr * e3 * e3) && (Q3.dot(QB) >= 0)
-    ) {
-
-        return false;
-
-    }
-
-    var distance = Math.sqrt(d * d / e) - sphere.radius,
-        contactPoint = new Vector3(),
-        negatedNormal = new Vector3(-normal.x, -normal.y, -normal.z);
-
-    contactPoint.copy(sphere.center).add(negatedNormal.multiplyScalar(distance));
-
-    return {
-        distance: distance,
-        contactPoint: contactPoint
-    };
-
-};
 
 const { PI } = Math
 
@@ -432,12 +421,25 @@ const clock = new Clock(true)
 const ship = new Ship(g_ship, m_green)
 scene.add(ship)
 
+ship.position.setX(3)
+
+//FIXME: DEBUG
+const m_white = new LineBasicMaterial({ color: 0xffffff })
+const ll_debug = new Line(new BufferGeometry(), m_white)
+scene.add(ll_debug)
+
 function animate() {
     requestAnimationFrame(animate)
 
     const dt = clock.getDelta()
 
     world.step()
+
+    if (true) {
+        const debugRender = world.debugRender()
+
+        ll_debug.geometry.setAttribute("position", new BufferAttribute(debugRender.vertices, 2))
+    }
 
     ship.update(dt)
 
@@ -449,8 +451,6 @@ function animate() {
     }
 
     // TODO: Create asteroid spawning system.
-
-    const shipDir = ship._velocity.clone().normalize()
 
     /** @type {Asteroid[]} */
     const asteroids = scene.getObjectsByUserDataProperty("type", "asteroid")
@@ -464,100 +464,62 @@ function animate() {
 
         const a = new Asteroid(m_green)
 
-        a.position.copy(shipDir).multiplyScalar(20).add(ship.position)
+        //a.position.copy(shipDir).multiplyScalar(20).add(ship.position)
+        // a._collider.setTranslation(new Vector2(0, 0))
 
         const e = new Euler(0, 0, randFloat(0, 2 * PI))
 
-        a._velocity.setX(randFloat(0.01, 0.05)).applyEuler(e)
+        // a._velocity.setX(randFloat(0.01, 0.05)).applyEuler(e)
+        // FIXME: Need to find a way to give the asteroid an initial push
+        // a._rigidBody.addForce({ x: randFloat(-50, 50), y: randFloat(-50, 50)})
 
         scene.add(a)
     }
+
+    const objectsWithColliderHandle = scene.getObjectsByUserDataName("colliderHandle")
+
+    for (const asteroid of asteroids) {
+        console.log(asteroid)
+        asteroid.update(dt)
+
+        world.contactsWith(asteroid._collider, ({ handle }) => {
+            const otherObj = objectsWithColliderHandle.find(({ userData: { colliderHandle } }) => colliderHandle === handle)
+
+            // TODO: Deside if I want the two colliding objects to push each other.
+            // asteroid._rigidBody.applyImpulse(new Vector3(0, 1, 0).applyEuler(otherObj.rotation).multiplyScalar(otherObj._rigidBody.mass()))
+            // otherObj._rigidBody.applyImpulse(new Vector3(0, 1, 0).applyEuler(asteroid.rotation).multiplyScalar(asteroid._rigidBody.mass()))
+
+            // Bug: For whatever reason, the other object needs to take the hit first. I have no clue why.
+            otherObj.takeHit()
+            asteroid.takeHit()
+        })
+    }
+
+    // world.contactsWith(ship._collider, ({ handle }) => {
+    //     const otherObj = objectsWithColliderHandle.find(({ userData: { colliderHandle } }) => colliderHandle === handle)
+
+    //     ship.takeHit()
+    //     otherObj.takeHit()
+    // })
 
     // FIXME: Asteroid is removed from scene but not from asteroids array so it is needlessly updated.
     // This is not the biggest issue as the game will run fine even with these extra calculations.
     // But, this could be a area to gain some performance, even if its minimal.
     asteroids
         .filter(({ position }) => ship.position.distanceTo(position) > ASTEROIDS_MAX_DISTANCE_FROM_PLAYER)
-        .forEach((asteroid) => scene.remove(asteroid))
+        .forEach((asteroid) => {
+            asteroid.dispose()
+        })
 
-    for (const asteroid of asteroids) {
-        asteroid.update(dt)
-
-        // for (const bullet of bullets) {
-
-
-        //     // asteroid.geometry.bounding
-        // }
-
-        // const isColliding = collision.isIntersectionSphereTriangle(
-
-        // )
-    }
-
-    // console.log(shipDir.multiplyScalar(20).add(ship.position))
-
-    // console.log(asteroid.position)
-
-    // asteroid.position.y = 10
-
-    // Ship HIT Asteroid Detection
-    /*
-    const gclone = g_ship.clone()
-
-    const worldPos = gclone.applyMatrix4(ship.matrixWorld)
-
-    asteroid.geometry.computeBoundingSphere()
-
-    const arr = worldPos.attributes.position.array
-
-    worldPos.dispose()
-    // BUG: Applying the matrix in this way causes the asteroid to pop in and out. Do it a different way.
-    asteroid.geometry.boundingSphere.applyMatrix4(asteroid.matrixWorld)
-
-    // TODO: Get collisions with asteroids - ships and asteroids - bullets working.
-    const trianglePoints = [
-        new Vector3(arr[0], arr[1], arr[2]),
-        new Vector3(arr[3], arr[4], arr[5]),
-        new Vector3(arr[12], arr[13], arr[14]),
-    ]
-    const c = collision.isIntersectionSphereTriangle(
-        asteroid.geometry.boundingSphere,
-        trianglePoints[0],
-        trianglePoints[1],
-        trianglePoints[2],
-        new Vector3(0, 0, 1)
-    )
-    const some = trianglePoints.some((point) => asteroid.geometry.boundingSphere.containsPoint(point))
-
-    // console.log(a.geometry.boundingSphere)
-
-    // console.log(!!c || some)
-    */
-    // Ship HIT Asteroid Detection END
-
-    // if (ship.position.distanceTo(camera.position) > 4 || cameraLerpCounter < 1) {
-    //     cameraLerpCounter += dt
-    //     // const t = cameraLerpClock.getElapsedTime()
-    //     camera.position.lerp(ship.position, cameraLerpCounter)
-    //     // camera.position.copy(ship.position)
-    //     if (cameraLerpCounter > 1)
-    //     cameraLerpCounter = 0
-    // }
     // TODO: Get nicer camera movement working.
     camera.position.copy(ship.position)
 
     camera.position.z = 0.001
 
-    // l_bullet.geometry.computeBoundingBox()
-
-    // const collish = a.geometry.boundingSphere.intersectsBox(l_bullet.geometry.boundingBox)
-
-    // console.log(collish)
 
 
 
-
-
+    // Rendering
     renderer.render(scene, camera)
 
     // FilmPass.uniforms["time"].value += dt
