@@ -13,23 +13,6 @@ import { Howl, Howler } from "howler"
 
 Howler.volume(0.4)
 
-// FIXME: Need to get this to play a random audio from the set of choices.
-// const explosionCrunch = new Howl({
-//     src: Array.from({length:5}).map((_,i) => `audio/explosionCrunch_00${i}.ogg`),
-// })
-
-// explosionCrunch.play()
-
-// class MyHowl extends Howl {
-//     constructor(args) {
-
-
-//         super(args)
-//     }
-
-//     play()
-// }
-
 const { randFloat, randInt, clamp } = MathUtils
 
 Array.prototype.random = function () {
@@ -38,7 +21,16 @@ Array.prototype.random = function () {
 
 // TODO: Adjust volume for each
 
-const s_explosionCrunchs = Array.from({ length: 5 }).map((_, i) => `audio/explosionCrunch_00${i}.ogg`).map(src => new Howl({ src }))
+let allowGameRestart = true
+
+const s_gameover = new Howl({
+    src: "audio/Undertale_OST-Determination.mp3",
+})
+
+const s_explosionCrunchs = Array.from({ length: 5 }).map((_, i) => `audio/explosionCrunch_00${i}.ogg`).map(src => new Howl({ src, onend: () => {
+    s_gameover.play()
+    setTimeout(() => allowGameRestart = true, 5500)
+}}))
 
 const s_impactMetals = Array.from({ length: 5 }).map((_, i) => `audio/impactMetal_00${i}.ogg`).map(src => new Howl({ src, volume: 1.6 }))
 
@@ -102,7 +94,7 @@ canvas.width = document.body.clientWidth
 canvas.height = document.body.clientHeight
 
 // TODO: Find good "zoom".
-const zoom = 1
+const zoom = 0.5
 const width = canvas.clientWidth / 640 * 10 / zoom, height = canvas.clientHeight / 640 * 10 / zoom
 
 const scene = new Scene()
@@ -220,6 +212,12 @@ class Physical extends LineLoop {
         world.removeRigidBody(this._rigidBody)
         scene.remove(this)
     }
+
+    disposeSafe() {
+        if (!this._isDisposed) {
+            this.dispose()
+        }
+    }
 }
 
 class Ship extends Physical {
@@ -302,18 +300,27 @@ class Ship extends Physical {
 
         if (this._health > 0)
             s_impactMetals.random().play()
-        else
+        else {
             s_explosionCrunchs.random().play()
+            allowGameRestart = false
+        }
     }
 }
 
-const ASTEROIDS_CAP = 1//0
-const ASTEROIDS_MAX_DISTANCE_FROM_PLAYER = 25
+const { PI, cos, sin, sqrt } = Math
+
+// TODO: Adjust values.
+// TODO: Consider making the ASTEROIDS cap variable to the time spent to make the difficulty increase over time.
+const ASTEROIDS_CAP = 20
+const MAX_ASTEROID_SIZE = 2
+const ASTEROIDS_SPAWN_DISTANCE_FROM_PLAYER_LOWER = sqrt(width * width + height * height) + MAX_ASTEROID_SIZE
+const ASTEROIDS_SPAWN_DISTANCE_FROM_PLAYER_UPPER = ASTEROIDS_SPAWN_DISTANCE_FROM_PLAYER_LOWER * 1.5
+const ASTEROIDS_MAX_DISTANCE_FROM_PLAYER = ASTEROIDS_SPAWN_DISTANCE_FROM_PLAYER_LOWER * 3
 
 class Asteroid extends Physical {
     #asteroidSize
 
-    constructor(material, s = 2) {
+    constructor(material, s = MAX_ASTEROID_SIZE) {
         const size = randInt(1, s)
 
         const { sin, cos, PI } = Math
@@ -471,8 +478,6 @@ class Bullet extends Physical {
     }
 }
 
-const { PI, cos, sin } = Math
-
 const keyHandler = new KeyHandler()
 
 const clock = new Clock(true)
@@ -499,9 +504,11 @@ function animate() {
     // Maybe something with stars would be nice.
 
     if (gameOver) {
+        if (allowGameRestart && keyHandler.isKeyPressed(" ")) {
+            scene.getObjectsByUserDataName("type").forEach(obj => obj.disposeSafe())
 
-        // TODO: Give a few seconds of pause before letting the player restart.
-        if (keyHandler.isKeyPressed(" ")) {
+            s_gameover.stop()
+
             document.getElementById("title").style.display = "none"
             document.getElementById("gameover").style.display = "none"
             document.getElementById("gameui").style.display = ""
@@ -564,7 +571,7 @@ function animate() {
 
                 const e = new Euler(0, 0, theta)
 
-                pos.add(new Vector3(randFloat(10, 20), 0, 0).applyEuler(e))
+                pos.add(new Vector3(randFloat(ASTEROIDS_SPAWN_DISTANCE_FROM_PLAYER_LOWER, ASTEROIDS_SPAWN_DISTANCE_FROM_PLAYER_UPPER), 0, 0).applyEuler(e))
 
                 const a = new Asteroid(m_green)
 
@@ -600,9 +607,12 @@ function animate() {
                         score += asteroid.getAsteroidSize()
                     }
 
-                    // BUG: For whatever reason, the other object needs to take the hit first. I have no clue why.
-                    otherObj.takeHit()
-                    asteroid.takeHit()
+                    if (otherObj.userData.type !== "asteroid") {
+                        // BUG: For whatever reason, the other object needs to take the hit first. I have no clue why.
+                        otherObj.takeHit()
+                        asteroid.takeHit()
+                    }
+
                 })
             }
 
