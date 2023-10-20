@@ -9,7 +9,49 @@ import { FilmShader } from "./shaders/FilmShader.js"
 import { BadTVShader } from "./shaders/BadTVShader.js"
 import { StaticShader } from "./shaders/StaticShader.js"
 
-//import { World, Body, Sphere as CannonSphere, Trimesh } from "rapier2d"
+import { Howl, Howler } from "howler"
+
+Howler.volume(0.4)
+
+// FIXME: Need to get this to play a random audio from the set of choices.
+// const explosionCrunch = new Howl({
+//     src: Array.from({length:5}).map((_,i) => `audio/explosionCrunch_00${i}.ogg`),
+// })
+
+// explosionCrunch.play()
+
+// class MyHowl extends Howl {
+//     constructor(args) {
+
+
+//         super(args)
+//     }
+
+//     play()
+// }
+
+const { randFloat, randInt, clamp } = MathUtils
+
+Array.prototype.random = function () {
+    return this[randInt(0, this.length - 1)]
+}
+
+// TODO: Adjust volume for each
+
+const s_explosionCrunchs = Array.from({ length: 5 }).map((_, i) => `audio/explosionCrunch_00${i}.ogg`).map(src => new Howl({ src }))
+
+const s_impactMetals = Array.from({ length: 5 }).map((_, i) => `audio/impactMetal_00${i}.ogg`).map(src => new Howl({ src, volume: 1.6 }))
+
+const s_laserRetros = Array.from({ length: 5 }).map((_, i) => `audio/laserRetro_00${i}.ogg`).map(src => new Howl({ src, volume: 0.8 }))
+
+const s_lowFrequencyExplosions = Array.from({ length: 2 }).map((_, i) => `audio/lowFrequency_explosion_00${i}.ogg`).map(src => new Howl({ src, volume: 2 }))
+
+const s_spaceEngineLow = new Howl({
+    src: "audio/spaceEngineLow_000.ogg",
+    loop: true,
+    volume: 0.5,
+})
+s_spaceEngineLow.rate(0)
 
 import { init, World, RigidBodyDesc, ColliderDesc } from "@dimforge/rapier2d"
 
@@ -53,8 +95,6 @@ Object3D.prototype.getObjectsByUserDataName = function (name) {
 
     return objects
 }
-
-const { randFloat, randInt } = MathUtils
 
 const canvas = document.getElementById("canvas")
 
@@ -156,6 +196,7 @@ class Physical extends LineLoop {
 
     takeHit() {
         // TODO: Make flashing material to show that the object is invulnerable.
+        // Or add force field sound effect.
 
         if (!this.#invulnerable) {
             this._health--
@@ -221,6 +262,12 @@ class Ship extends Physical {
         this.position.set(x, y, 0)
 
         this._rigidBody.setRotation(this.rotation.z, true)
+
+        {
+            const { x, y } = this._rigidBody.linvel()
+            const length = new Vector2(x, y).length()
+            s_spaceEngineLow.rate(clamp(length / 10, 0, 3))
+        }
     }
 
     #fire() {
@@ -235,6 +282,8 @@ class Ship extends Physical {
         bullet._rigidBody.addForce(new Vector2(-sin(this.rotation.z), cos(this.rotation.z)).multiplyScalar(Bullet.BULLET_SPEED))
 
         scene.add(bullet)
+
+        s_laserRetros.random().play()
     }
 
     update(dt) {
@@ -246,6 +295,15 @@ class Ship extends Physical {
             this.#canFire = false
             setTimeout(() => this.#canFire = true, this.#fireCooldown * 1000)
         }
+    }
+
+    takeHit() {
+        super.takeHit()
+
+        if (this._health > 0)
+            s_impactMetals.random().play()
+        else
+            s_explosionCrunchs.random().play()
     }
 }
 
@@ -317,7 +375,11 @@ class Asteroid extends Physical {
         this.#movement()
     }
 
+    getAsteroidSize = () => this.#asteroidSize
+
     takeHit() {
+        s_lowFrequencyExplosions.random().play()
+
         if (this._health - 1 <= 0) {
             // TODO: Spawn new asteroids
 
@@ -420,6 +482,8 @@ const clock = new Clock(true)
 
 let ship;
 
+let score = 0
+
 //FIXME: DEBUG
 const m_white = new LineBasicMaterial({ color: 0xffffff })
 const ll_debug = new Line(new BufferGeometry(), m_white)
@@ -435,12 +499,19 @@ function animate() {
     // Maybe something with stars would be nice.
 
     if (gameOver) {
+
+        // TODO: Give a few seconds of pause before letting the player restart.
         if (keyHandler.isKeyPressed(" ")) {
             document.getElementById("title").style.display = "none"
             document.getElementById("gameover").style.display = "none"
+            document.getElementById("gameui").style.display = ""
 
             ship = new Ship(g_ship, m_green)
             scene.add(ship)
+
+            s_spaceEngineLow.play()
+
+            score = 0
 
             // TODO: Add animations and sounds.
             gameOver = false
@@ -449,6 +520,9 @@ function animate() {
     else
         if (ship._isDisposed) {
             document.getElementById("gameover").style.display = ""
+            document.getElementById("gameui").style.display = "none"
+
+            s_spaceEngineLow.stop()
 
 
             // TODO: Add animations and sounds.
@@ -521,6 +595,10 @@ function animate() {
                     // TODO: Deside if I want the two colliding objects to push each other.
                     // asteroid._rigidBody.applyImpulse(new Vector3(0, 1, 0).applyEuler(otherObj.rotation).multiplyScalar(otherObj._rigidBody.mass()))
                     // otherObj._rigidBody.applyImpulse(new Vector3(0, 1, 0).applyEuler(asteroid.rotation).multiplyScalar(asteroid._rigidBody.mass()))
+
+                    if (otherObj.userData.type === "bullet") {
+                        score += asteroid.getAsteroidSize()
+                    }
 
                     // BUG: For whatever reason, the other object needs to take the hit first. I have no clue why.
                     otherObj.takeHit()
