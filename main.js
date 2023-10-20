@@ -58,6 +58,9 @@ const { randFloat, randInt } = MathUtils
 
 const canvas = document.getElementById("canvas")
 
+canvas.width = document.body.clientWidth
+canvas.height = document.body.clientHeight
+
 // TODO: Find good "zoom".
 const zoom = 1
 const width = canvas.clientWidth / 640 * 10 / zoom, height = canvas.clientHeight / 640 * 10 / zoom
@@ -412,118 +415,141 @@ const keyHandler = new KeyHandler()
 
 const clock = new Clock(true)
 
-const ship = new Ship(g_ship, m_green)
-scene.add(ship)
+// let ship = new Ship(g_ship, m_green)
+// scene.add(ship)
 
-ship.position.setX(3)
+let ship;
 
 //FIXME: DEBUG
 const m_white = new LineBasicMaterial({ color: 0xffffff })
 const ll_debug = new Line(new BufferGeometry(), m_white)
 scene.add(ll_debug)
 
+let gameOver = true
+
 function animate() {
 
     requestAnimationFrame(animate)
 
-    if (ship._isDisposed) {
-        console.log("GAME OVER")
+    // TODO: Make a background for the game so that it is easier to tell how fast the player is moving.
+    // Maybe something with stars would be nice.
+
+    if (gameOver) {
+        if (keyHandler.isKeyPressed(" ")) {
+            document.getElementById("title").style.display = "none"
+            document.getElementById("gameover").style.display = "none"
+
+            ship = new Ship(g_ship, m_green)
+            scene.add(ship)
+
+            // TODO: Add animations and sounds.
+            gameOver = false
+        }
     }
-    else {
-        const dt = clock.getDelta()
+    else
+        if (ship._isDisposed) {
+            document.getElementById("gameover").style.display = ""
 
-        world.step()
 
-        if (false) {
-            const debugRender = world.debugRender()
-
-            ll_debug.geometry.setAttribute("position", new BufferAttribute(debugRender.vertices, 2))
+            // TODO: Add animations and sounds.
+            gameOver = true
         }
+        else {
+            const dt = clock.getDelta()
 
-        ship.update(dt)
+            world.step()
 
-        /** @type {Bullet[]} */
-        const bullets = scene.getObjectsByUserDataProperty("type", "bullet")
+            if (false) {
+                const debugRender = world.debugRender()
 
-        for (const bullet of bullets) {
-            bullet.update(dt)
+                ll_debug.geometry.setAttribute("position", new BufferAttribute(debugRender.vertices, 2))
+            }
+
+            ship.update(dt)
+
+            /** @type {Bullet[]} */
+            const bullets = scene.getObjectsByUserDataProperty("type", "bullet")
+
+            for (const bullet of bullets) {
+                bullet.update(dt)
+            }
+
+            /** @type {Asteroid[]} */
+            const asteroids = scene.getObjectsByUserDataProperty("type", "asteroid")
+
+            // asteroids that are 25 to 30 away should be removed.
+            // asteroids should spawn in 20 away and be given a random direction
+
+            // TODO: Need to work on this spawning system.
+            // TODO: Change spawning so that the asteroids never spawn on screen.
+            for (let i = 0; i < ASTEROIDS_CAP - asteroids.length; i++) {
+
+                const theta = randFloat(0, PI * 2)
+
+                const pos = ship.position.clone()
+
+                const e = new Euler(0, 0, theta)
+
+                pos.add(new Vector3(randFloat(10, 20), 0, 0).applyEuler(e))
+
+                const a = new Asteroid(m_green)
+
+                // TODO: Spawn asteroids in circle around center of destroyed asteroid.
+
+                a._rigidBody.setTranslation(pos)
+
+                a._rigidBody.setLinvel(ship._rigidBody.linvel())
+
+                a._rigidBody.addForce(new Vector3(randFloat(1, 10), randFloat(-5, 5), 0).applyEuler(e).multiplyScalar(-1))
+
+                scene.add(a)
+
+                a.update()
+            }
+
+            const objectsWithColliderHandle = scene.getObjectsByUserDataName("colliderHandle")
+
+            for (const asteroid of asteroids) {
+                if (asteroid._isDisposed)
+                    continue
+
+                asteroid.update(dt)
+
+                world.contactsWith(asteroid._collider, ({ handle }) => {
+                    const otherObj = objectsWithColliderHandle.find(({ userData: { colliderHandle } }) => colliderHandle === handle)
+
+                    // TODO: Deside if I want the two colliding objects to push each other.
+                    // asteroid._rigidBody.applyImpulse(new Vector3(0, 1, 0).applyEuler(otherObj.rotation).multiplyScalar(otherObj._rigidBody.mass()))
+                    // otherObj._rigidBody.applyImpulse(new Vector3(0, 1, 0).applyEuler(asteroid.rotation).multiplyScalar(asteroid._rigidBody.mass()))
+
+                    // BUG: For whatever reason, the other object needs to take the hit first. I have no clue why.
+                    otherObj.takeHit()
+                    asteroid.takeHit()
+                })
+            }
+
+            // FIXME: Asteroid is removed from scene but not from asteroids array so it is needlessly updated.
+            // This is not the biggest issue as the game will run fine even with these extra calculations.
+            // But, this could be a area to gain some performance, even if its minimal.
+            asteroids
+                .filter(({ position }) => ship.position.distanceTo(position) > ASTEROIDS_MAX_DISTANCE_FROM_PLAYER)
+                .forEach((asteroid) => {
+                    if (!asteroid._isDisposed)
+                        asteroid.dispose()
+                })
+
+            // TODO: Get nicer camera movement working.
+            camera.position.copy(ship.position)
+            camera.position.z = 0.001
+
+            // Rendering
+            renderer.render(scene, camera)
+
+            // FilmPass.uniforms["time"].value += dt
+            // BadTVPass.uniforms["time"].value += dt
+            // StaticPass.uniforms["time"].value += dt
+            // composer.render(dt)
         }
-
-        /** @type {Asteroid[]} */
-        const asteroids = scene.getObjectsByUserDataProperty("type", "asteroid")
-
-        // asteroids that are 25 to 30 away should be removed.
-        // asteroids should spawn in 20 away and be given a random direction
-
-        // TODO: Need to work on this spawning system.
-        for (let i = 0; i < ASTEROIDS_CAP - asteroids.length; i++) {
-
-            const theta = randFloat(0, PI * 2)
-
-            const pos = ship.position.clone()
-
-            const e = new Euler(0, 0, theta)
-
-            pos.add(new Vector3(randFloat(10, 20), 0, 0).applyEuler(e))
-
-            const a = new Asteroid(m_green)
-
-            // TODO: Spawn asteroids in circle around center of destroyed asteroid.
-
-            a._rigidBody.setTranslation(pos)
-
-            a._rigidBody.setLinvel(ship._rigidBody.linvel())
-
-            a._rigidBody.addForce(new Vector3(randFloat(1, 10), randFloat(-5, 5), 0).applyEuler(e).multiplyScalar(-1))
-            
-            scene.add(a)
-            
-            a.update()
-        }
-
-        const objectsWithColliderHandle = scene.getObjectsByUserDataName("colliderHandle")
-
-        for (const asteroid of asteroids) {
-            if (asteroid._isDisposed)
-                continue
-
-            asteroid.update(dt)
-
-            world.contactsWith(asteroid._collider, ({ handle }) => {
-                const otherObj = objectsWithColliderHandle.find(({ userData: { colliderHandle } }) => colliderHandle === handle)
-
-                // TODO: Deside if I want the two colliding objects to push each other.
-                // asteroid._rigidBody.applyImpulse(new Vector3(0, 1, 0).applyEuler(otherObj.rotation).multiplyScalar(otherObj._rigidBody.mass()))
-                // otherObj._rigidBody.applyImpulse(new Vector3(0, 1, 0).applyEuler(asteroid.rotation).multiplyScalar(asteroid._rigidBody.mass()))
-
-                // BUG: For whatever reason, the other object needs to take the hit first. I have no clue why.
-                otherObj.takeHit()
-                asteroid.takeHit()
-            })
-        }
-
-        // FIXME: Asteroid is removed from scene but not from asteroids array so it is needlessly updated.
-        // This is not the biggest issue as the game will run fine even with these extra calculations.
-        // But, this could be a area to gain some performance, even if its minimal.
-        asteroids
-            .filter(({ position }) => ship.position.distanceTo(position) > ASTEROIDS_MAX_DISTANCE_FROM_PLAYER)
-            .forEach((asteroid) => {
-                if (!asteroid._isDisposed)
-                    asteroid.dispose()
-            })
-
-        // TODO: Get nicer camera movement working.
-        camera.position.copy(ship.position)
-        camera.position.z = 0.001
-
-        // Rendering
-        renderer.render(scene, camera)
-
-        // FilmPass.uniforms["time"].value += dt
-        // BadTVPass.uniforms["time"].value += dt
-        // StaticPass.uniforms["time"].value += dt
-        // composer.render(dt)
-    }
 }
 
 if (WebGL.isWebGLAvailable()) {
@@ -531,5 +557,6 @@ if (WebGL.isWebGLAvailable()) {
 
     animate()
 }
-else
+else {
     document.body.appendChild(WebGL.getWebGLErrorMessage())
+}
