@@ -1,4 +1,4 @@
-import { Scene, WebGLRenderer, LineLoop, LineBasicMaterial, BufferGeometry, Vector2, Vector3, Clock, MathUtils, Euler, Line, OrthographicCamera, Object3D, BufferAttribute, Vector4, LineDashedMaterial } from "three"
+import { Scene, WebGLRenderer, LineLoop, LineBasicMaterial, BufferGeometry, Vector2, Vector3, Clock, MathUtils, Euler, Line, OrthographicCamera, Object3D, BufferAttribute, TextureLoader, RepeatWrapping } from "three"
 
 import WebGL from "three/addons/capabilities/WebGL.js"
 
@@ -19,18 +19,18 @@ Array.prototype.random = function () {
     return this[randInt(0, this.length - 1)]
 }
 
-// TODO: Adjust volume for each
-
 let allowGameRestart = true
 
 const s_gameover = new Howl({
     src: "audio/Undertale_OST-Determination.mp3",
 })
 
-const s_explosionCrunchs = Array.from({ length: 5 }).map((_, i) => `audio/explosionCrunch_00${i}.ogg`).map(src => new Howl({ src, onend: () => {
-    s_gameover.play()
-    setTimeout(() => allowGameRestart = true, 5500)
-}}))
+const s_explosionCrunchs = Array.from({ length: 5 }).map((_, i) => `audio/explosionCrunch_00${i}.ogg`).map(src => new Howl({
+    src, onend: () => {
+        s_gameover.play()
+        setTimeout(() => allowGameRestart = true, 5500)
+    }
+}))
 
 const s_impactMetals = Array.from({ length: 5 }).map((_, i) => `audio/impactMetal_00${i}.ogg`).map(src => new Howl({ src, volume: 1.6 }))
 
@@ -98,13 +98,21 @@ const zoom = 0.5
 const width = canvas.clientWidth / 640 * 10 / zoom, height = canvas.clientHeight / 640 * 10 / zoom
 
 const scene = new Scene()
+
+scene.background = new TextureLoader().load("space.png")
+scene.background.wrapS = RepeatWrapping
+scene.background.wrapT = RepeatWrapping
+
+// TODO: Deside of repeat setting.
+// scene.background.repeat.set(1.5, 1.5)
+scene.background.repeat.set(2, 2)
+
 const camera = new OrthographicCamera(-width, width, height, -height, 0)
 
 camera.frustumCulled = false
 camera.updateProjectionMatrix()
 
-// FIXME: The canvas is not the same size as the window, causing the scroll bars to apear.
-const renderer = new WebGLRenderer({ canvas })
+const renderer = new WebGLRenderer({ canvas, alpha: true })
 renderer.setSize(canvas.clientWidth, canvas.clientHeight)
 
 const composer = new EffectComposer(renderer)
@@ -388,8 +396,6 @@ class Asteroid extends Physical {
         s_lowFrequencyExplosions.random().play()
 
         if (this._health - 1 <= 0) {
-            // TODO: Spawn new asteroids
-
             const size = this.#asteroidSize - 1
 
             if (size > 0) {
@@ -422,10 +428,6 @@ class Asteroid extends Physical {
 
         super.takeHit()
     }
-
-    // TODO: Make hit and kill system for asteroids.
-    // The asteroids should split into 4 smaller asteroids that shoot out in 4 different directions when a big asteroid is killed.
-    // Small asteroids just disapear when killed.
 }
 
 class Bullet extends Physical {
@@ -482,9 +484,6 @@ const keyHandler = new KeyHandler()
 
 const clock = new Clock(true)
 
-// let ship = new Ship(g_ship, m_green)
-// scene.add(ship)
-
 let ship;
 
 let score = 0
@@ -496,12 +495,23 @@ scene.add(ll_debug)
 
 let gameOver = true
 
-function animate() {
+let isPaused = false
+let previousPauseButtonState = false
 
+const DEBUG = false
+
+function animate() {
     requestAnimationFrame(animate)
 
-    // TODO: Make a background for the game so that it is easier to tell how fast the player is moving.
-    // Maybe something with stars would be nice.
+    if (!previousPauseButtonState & keyHandler.isKeyPressed("Escape") & !gameOver)
+        isPaused = !isPaused
+
+    previousPauseButtonState = keyHandler.isKeyPressed("Escape")
+
+    document.getElementById("pausedui").style.display = isPaused ? "" : "none"
+
+    if (isPaused)
+        return
 
     if (gameOver) {
         if (allowGameRestart && keyHandler.isKeyPressed(" ")) {
@@ -520,7 +530,7 @@ function animate() {
 
             score = 0
 
-            // TODO: Add animations and sounds.
+            // TODO: Add animations.
             gameOver = false
         }
     }
@@ -532,7 +542,7 @@ function animate() {
             s_spaceEngineLow.stop()
 
 
-            // TODO: Add animations and sounds.
+            // TODO: Add animations.
             gameOver = true
         }
         else {
@@ -540,7 +550,7 @@ function animate() {
 
             world.step()
 
-            if (false) {
+            if (DEBUG) {
                 const debugRender = world.debugRender()
 
                 ll_debug.geometry.setAttribute("position", new BufferAttribute(debugRender.vertices, 2))
@@ -562,7 +572,6 @@ function animate() {
             // asteroids should spawn in 20 away and be given a random direction
 
             // TODO: Need to work on this spawning system.
-            // TODO: Change spawning so that the asteroids never spawn on screen.
             for (let i = 0; i < ASTEROIDS_CAP - asteroids.length; i++) {
 
                 const theta = randFloat(0, PI * 2)
@@ -575,11 +584,7 @@ function animate() {
 
                 const a = new Asteroid(m_green)
 
-                // TODO: Spawn asteroids in circle around center of destroyed asteroid.
-
                 a._rigidBody.setTranslation(pos)
-
-                a._rigidBody.setLinvel(ship._rigidBody.linvel())
 
                 a._rigidBody.addForce(new Vector3(randFloat(1, 10), randFloat(-5, 5), 0).applyEuler(e).multiplyScalar(-1))
 
@@ -594,6 +599,11 @@ function animate() {
                 if (asteroid._isDisposed)
                     continue
 
+                if (ship.position.distanceTo(asteroid.position) > ASTEROIDS_MAX_DISTANCE_FROM_PLAYER) {
+                    asteroid.disposeSafe()
+                    continue
+                }
+
                 asteroid.update(dt)
 
                 world.contactsWith(asteroid._collider, ({ handle }) => {
@@ -604,7 +614,8 @@ function animate() {
                     // otherObj._rigidBody.applyImpulse(new Vector3(0, 1, 0).applyEuler(asteroid.rotation).multiplyScalar(asteroid._rigidBody.mass()))
 
                     if (otherObj.userData.type === "bullet") {
-                        score += asteroid.getAsteroidSize()
+                        // TODO: Deside on how to score should work.
+                        score++// += asteroid.getAsteroidSize()
                     }
 
                     if (otherObj.userData.type !== "asteroid") {
@@ -616,27 +627,29 @@ function animate() {
                 })
             }
 
-            // FIXME: Asteroid is removed from scene but not from asteroids array so it is needlessly updated.
-            // This is not the biggest issue as the game will run fine even with these extra calculations.
-            // But, this could be a area to gain some performance, even if its minimal.
-            asteroids
-                .filter(({ position }) => ship.position.distanceTo(position) > ASTEROIDS_MAX_DISTANCE_FROM_PLAYER)
-                .forEach((asteroid) => {
-                    if (!asteroid._isDisposed)
-                        asteroid.dispose()
-                })
-
             // TODO: Get nicer camera movement working.
             camera.position.copy(ship.position)
-            camera.position.z = 0.001
+            camera.position.setZ(0.001)
+
+            scene.background.offset.copy(ship.position).divideScalar(50)
+
+            const scoreString = new String(score)
+            if (4 - scoreString.length >= 0)
+                document.getElementById("score").textContent = "0".repeat(4 - scoreString.length) + scoreString
+            else
+                document.getElementById("score").textContent = scoreString
+
+            document.getElementById("lives").textContent = "♡".repeat(ship._health)
 
             // Rendering
+            // TODO: Deside on if I am going to use post processing or not.
             renderer.render(scene, camera)
 
             // FilmPass.uniforms["time"].value += dt
             // BadTVPass.uniforms["time"].value += dt
             // StaticPass.uniforms["time"].value += dt
             // composer.render(dt)
+
         }
 }
 

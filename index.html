@@ -59,31 +59,55 @@
             margin: 2rem;
             font-size: 2rem;
         }
+
+        #gameui p {
+            margin: 0 0.5rem;
+        }
+
+        #pausedui {
+            background-color: #668b6540;
+        }
+        
     </style>
 </head>
 
 <body>
     <canvas id="canvas" class="fixed-position"></canvas>
 
-    <!-- TODO: Add UI & create functionality in code. -->
     <div id="title" class="center fixed-position">
         <h1>Asteroids</h1>
         <p>Press Space to Play</p>
-        <details style="position: relative;">
+        <!-- TODO: Make Animation for when this opens and closes. -->
+        <details>
             <summary>Controls</summary>
             <ul>
                 <li>Rotate Left - a</li>
                 <li>Rotate Right - d</li>
                 <li>Move Forward - w</li>
                 <li>Shoot - Space</li>
+                <li>Pause - Escape</li>
             </ul>
         </details>
     </div>
 
     <div id="gameui" class="fixed-position" style="display: none;">
-        <!-- Score and lives at top left -->
-        <p>0000</p>
-        <!-- Make score have 4 digits (0000) by default -->
+        <p id="score">0000</p>
+        <p id="lives">♡♡♡</p>
+    </div>
+
+    <div id="pausedui" class="center fixed-position" style="display: none;">
+        <h1>Paused...</h1>
+        <!-- TODO: Make Animation for when this opens and closes. -->
+        <details>
+            <summary>Controls</summary>
+            <ul>
+                <li>Rotate Left - a</li>
+                <li>Rotate Right - d</li>
+                <li>Move Forward - w</li>
+                <li>Shoot - Space</li>
+                <li>Pause - Escape</li>
+            </ul>
+        </details>
     </div>
 
     <div id="gameover" class="center fixed-position" style="display: none;">
