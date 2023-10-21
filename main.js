@@ -29,6 +29,8 @@ const s_explosionCrunchs = Array.from({ length: 5 }).map((_, i) => `audio/explos
     src, onend: () => {
         s_gameover.play()
         setTimeout(() => allowGameRestart = true, 5500)
+        document.getElementById("gameover").style.display = ""
+        document.getElementById("gameui").style.display = "none"
     }
 }))
 
@@ -100,7 +102,7 @@ const width = canvas.clientWidth / 640 * 10 / zoom, height = canvas.clientHeight
 
 const scene = new Scene()
 
-scene.background = new TextureLoader().load("space.png")
+scene.background = new TextureLoader().load("textures/space.png")
 scene.background.wrapS = scene.background.wrapT = RepeatWrapping
 
 const aspectRatio = width / height
@@ -130,8 +132,8 @@ FilmPass.uniforms["nIntensity"].value = 0.4
 const BadTVPass = new ShaderPass(BadTVShader)
 composer.addPass(BadTVPass)
 
-BadTVPass.uniforms["distortion"].value = 2
-BadTVPass.uniforms["distortion2"].value = 1.6
+BadTVPass.uniforms["distortion"].value = 0.4
+BadTVPass.uniforms["distortion2"].value = .2
 BadTVPass.uniforms["speed"].value = 0.06
 BadTVPass.uniforms["rollSpeed"].value = 0
 
@@ -141,13 +143,14 @@ composer.addPass(StaticPass)
 StaticPass.uniforms["amount"].value = 0.01
 StaticPass.uniforms["size"].value = 4
 
-const g_ship = new BufferGeometry().setFromPoints([
+const shipPoints = [
     new Vector3(0, 1),
     new Vector3(-.8, -1),
     new Vector3(-.3, -.6),
     new Vector3(.3, -.6),
     new Vector3(.8, -1),
-])
+]
+const g_ship = new BufferGeometry().setFromPoints(shipPoints)
 
 const m_green = new LineBasicMaterial({ color: 0x00ff00 })
 
@@ -224,6 +227,46 @@ class Physical extends LineLoop {
     }
 }
 
+class ShipPart extends Physical {
+    constructor(points, material) {
+        super(
+            new BufferGeometry().setFromPoints(points),
+            material
+        )
+
+        this._rigidBody = world.createRigidBody(RigidBodyDesc.dynamic())
+        this._rigidBody.setAdditionalMass(0.01) // TODO: Adjust mass.
+        this._rigidBody.setAngularDamping(0.1)
+
+        this._collider = world.createCollider(
+            ColliderDesc.segment(
+                points[0],
+                points[1]
+            ),
+            this._rigidBody
+        )
+
+        this.userData = {
+            type: "shippart",
+            rigidBodyHandle: this._rigidBody.handle,
+            colliderHandle: this._collider.handle,
+        }
+
+        this._health = 999
+    }
+
+    #movement() {
+        const { x, y } = this._rigidBody.translation()
+        this.position.set(x, y, 0)
+
+        this.rotation.z = this._rigidBody.rotation()
+    }
+
+    update() {
+        this.#movement()
+    }
+}
+
 class Ship extends Physical {
     #rotateSpeed = 3.5
 
@@ -247,6 +290,8 @@ class Ship extends Physical {
             rigidBodyHandle: this._rigidBody.handle,
             colliderHandle: this._collider.handle,
         }
+
+        this._health = 1
     }
 
     #movement(dt) {
@@ -291,6 +336,7 @@ class Ship extends Physical {
     update(dt) {
         this.#movement(dt)
 
+        // TODO: Consider adding cooldown to shooting so that it wont get abused.
         if (this.#canFire && keyHandler.isKeyPressed(" ")) {
             this.#fire()
 
@@ -302,6 +348,8 @@ class Ship extends Physical {
     takeHit() {
         const priorHealth = this._health
 
+        const linvel = this._rigidBody.linvel()
+
         super.takeHit()
 
         if (priorHealth === this._health)
@@ -309,8 +357,43 @@ class Ship extends Physical {
         else if (this._health > 0)
             s_impactMetals.random().play()
         else {
+            const resolution = shipPoints.length
+            const angleStep = PI * 2 / resolution
+
+            for (let i = 0; i < resolution; i++) {
+                const points = i !== shipPoints.length - 1 ? [
+                    shipPoints[i],
+                    shipPoints[i + 1]
+                ] : [
+                    shipPoints[i],
+                    shipPoints[0]
+                ]
+
+                const shippart = new ShipPart(
+                    points,
+                    this.material
+                )
+
+                shippart._rigidBody.setTranslation(this.position)
+                shippart._rigidBody.setRotation(this.rotation.z)
+
+                shippart._rigidBody.setLinvel(linvel)
+
+                const theta = i * angleStep
+
+                const force = new Vector2((cos(theta)), sin(theta)).multiplyScalar(1.2)
+
+                shippart._rigidBody.applyImpulseAtPoint(force, this.position, true)
+
+                scene.add(shippart)
+
+                shippart.update()
+            }
+
             s_explosionCrunchs.random().play()
             allowGameRestart = false
+            s_spaceEngineLow.stop()
+            gameOver = true
         }
     }
 }
@@ -498,6 +581,7 @@ let isPaused = false
 let previousPauseButtonState = false
 
 const DEBUG = false
+const POST_PROCESSING = true
 
 function animate() {
     requestAnimationFrame(animate)
@@ -512,7 +596,17 @@ function animate() {
     if (isPaused)
         return
 
+    const dt = clock.getDelta()
+
     if (gameOver) {
+        world.step()
+
+        const objectsToUpdate = scene.getObjectsByUserDataName("type")
+
+        for (const obj of objectsToUpdate) {
+            obj.update()
+        }
+
         if (allowGameRestart && keyHandler.isKeyPressed(" ")) {
             scene.getObjectsByUserDataName("type").forEach(obj => obj.disposeSafe())
 
@@ -529,127 +623,110 @@ function animate() {
 
             score = 0
 
-            // TODO: Add animations.
             gameOver = false
         }
     }
-    else
-        if (ship._isDisposed) {
-            document.getElementById("gameover").style.display = ""
-            document.getElementById("gameui").style.display = "none"
+    else {
+        world.step()
 
-            s_spaceEngineLow.stop()
+        if (DEBUG) {
+            const debugRender = world.debugRender()
 
-
-            // TODO: Add animations.
-            gameOver = true
+            ll_debug.geometry.setAttribute("position", new BufferAttribute(debugRender.vertices, 2))
         }
-        else {
-            const dt = clock.getDelta()
 
-            world.step()
-
-            if (DEBUG) {
-                const debugRender = world.debugRender()
-
-                ll_debug.geometry.setAttribute("position", new BufferAttribute(debugRender.vertices, 2))
-            }
-
+        if (!ship._isDisposed)
             ship.update(dt)
 
-            /** @type {Bullet[]} */
-            const bullets = scene.getObjectsByUserDataProperty("type", "bullet")
+        /** @type {Bullet[]} */
+        const bullets = scene.getObjectsByUserDataProperty("type", "bullet")
 
-            for (const bullet of bullets) {
-                bullet.update(dt)
+        for (const bullet of bullets) {
+            bullet.update(dt)
+        }
+
+        /** @type {Asteroid[]} */
+        const asteroids = scene.getObjectsByUserDataProperty("type", "asteroid")
+
+        // TODO: Need to work on this spawning system.
+        for (let i = 0; i < ASTEROIDS_CAP - asteroids.length; i++) {
+
+            const theta = randFloat(0, PI * 2)
+
+            const pos = ship.position.clone()
+
+            const e = new Euler(0, 0, theta)
+
+            pos.add(new Vector3(randFloat(ASTEROIDS_SPAWN_DISTANCE_FROM_PLAYER_LOWER, ASTEROIDS_SPAWN_DISTANCE_FROM_PLAYER_UPPER), 0, 0).applyEuler(e))
+
+            const a = new Asteroid(m_green)
+
+            a._rigidBody.setTranslation(pos)
+
+            a._rigidBody.addForce(new Vector3(randFloat(1, 10), randFloat(-5, 5), 0).applyEuler(e).multiplyScalar(-1))
+
+            scene.add(a)
+
+            a.update()
+        }
+
+        const objectsWithColliderHandle = scene.getObjectsByUserDataName("colliderHandle")
+
+        for (const asteroid of asteroids) {
+            if (asteroid._isDisposed)
+                continue
+
+            if (ship.position.distanceTo(asteroid.position) > ASTEROIDS_MAX_DISTANCE_FROM_PLAYER) {
+                asteroid.disposeSafe()
+                continue
             }
 
-            /** @type {Asteroid[]} */
-            const asteroids = scene.getObjectsByUserDataProperty("type", "asteroid")
+            asteroid.update(dt)
 
-            // asteroids that are 25 to 30 away should be removed.
-            // asteroids should spawn in 20 away and be given a random direction
+            world.contactsWith(asteroid._collider, ({ handle }) => {
+                const otherObj = objectsWithColliderHandle.find(({ userData: { colliderHandle } }) => colliderHandle === handle)
 
-            // TODO: Need to work on this spawning system.
-            for (let i = 0; i < ASTEROIDS_CAP - asteroids.length; i++) {
+                if (otherObj.userData.type === "bullet") {
+                    score++
 
-                const theta = randFloat(0, PI * 2)
-
-                const pos = ship.position.clone()
-
-                const e = new Euler(0, 0, theta)
-
-                pos.add(new Vector3(randFloat(ASTEROIDS_SPAWN_DISTANCE_FROM_PLAYER_LOWER, ASTEROIDS_SPAWN_DISTANCE_FROM_PLAYER_UPPER), 0, 0).applyEuler(e))
-
-                const a = new Asteroid(m_green)
-
-                a._rigidBody.setTranslation(pos)
-
-                a._rigidBody.addForce(new Vector3(randFloat(1, 10), randFloat(-5, 5), 0).applyEuler(e).multiplyScalar(-1))
-
-                scene.add(a)
-
-                a.update()
-            }
-
-            const objectsWithColliderHandle = scene.getObjectsByUserDataName("colliderHandle")
-
-            for (const asteroid of asteroids) {
-                if (asteroid._isDisposed)
-                    continue
-
-                if (ship.position.distanceTo(asteroid.position) > ASTEROIDS_MAX_DISTANCE_FROM_PLAYER) {
-                    asteroid.disposeSafe()
-                    continue
+                    if (!(score % 25)) {
+                        ship._health++
+                    }
                 }
 
-                asteroid.update(dt)
-
-                world.contactsWith(asteroid._collider, ({ handle }) => {
-                    const otherObj = objectsWithColliderHandle.find(({ userData: { colliderHandle } }) => colliderHandle === handle)
-
-                    // TODO: Deside if I want the two colliding objects to push each other.
-                    // asteroid._rigidBody.applyImpulse(new Vector3(0, 1, 0).applyEuler(otherObj.rotation).multiplyScalar(otherObj._rigidBody.mass()))
-                    // otherObj._rigidBody.applyImpulse(new Vector3(0, 1, 0).applyEuler(asteroid.rotation).multiplyScalar(asteroid._rigidBody.mass()))
-
-                    if (otherObj.userData.type === "bullet") {
-                        // TODO: Deside on how to score should work.
-                        score++// += asteroid.getAsteroidSize()
-                    }
-
-                    if (otherObj.userData.type !== "asteroid") {
-                        // BUG: For whatever reason, the other object needs to take the hit first. I have no clue why.
-                        otherObj.takeHit()
-                        asteroid.takeHit()
-                    }
-
-                })
-            }
-
-            // TODO: Get nicer camera movement working.
-            camera.position.copy(ship.position)
-            camera.position.setZ(0.001)
-
-            scene.background.offset.copy(ship.position).divideScalar(50)
-
-            const scoreString = new String(score)
-            if (4 - scoreString.length >= 0)
-                document.getElementById("score").textContent = "0".repeat(4 - scoreString.length) + scoreString
-            else
-                document.getElementById("score").textContent = scoreString
-
-            document.getElementById("lives").textContent = "♡".repeat(ship._health)
-
-            // Rendering
-            // TODO: Deside on if I am going to use post processing or not.
-            renderer.render(scene, camera)
-
-            // FilmPass.uniforms["time"].value += dt
-            // BadTVPass.uniforms["time"].value += dt
-            // StaticPass.uniforms["time"].value += dt
-            // composer.render(dt)
-
+                if (otherObj.userData.type !== "asteroid" | otherObj.userData.type !== "shippart") {
+                    // BUG: For whatever reason, the other object needs to take the hit first. I have no clue why.
+                    otherObj.takeHit()
+                    asteroid.takeHit()
+                }
+            })
         }
+
+        camera.position.copy(ship.position)
+        camera.position.setZ(0.001)
+
+        scene.background.offset.copy(ship.position).divideScalar(50)
+
+        const scoreString = new String(score)
+        if (4 - scoreString.length >= 0)
+            document.getElementById("score").textContent = "0".repeat(4 - scoreString.length) + scoreString
+        else
+            document.getElementById("score").textContent = scoreString
+
+        document.getElementById("lives").textContent = "♡".repeat(ship._health)
+
+
+    }
+    // Rendering
+    if (POST_PROCESSING) {
+        FilmPass.uniforms["time"].value += dt
+        BadTVPass.uniforms["time"].value += dt
+        StaticPass.uniforms["time"].value += dt
+        composer.render(dt)
+    }
+    else
+        renderer.render(scene, camera)
+
 }
 
 if (WebGL.isWebGLAvailable()) {
