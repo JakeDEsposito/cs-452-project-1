@@ -290,8 +290,6 @@ class Ship extends Physical {
             rigidBodyHandle: this._rigidBody.handle,
             colliderHandle: this._collider.handle,
         }
-
-        this._health = 1
     }
 
     #movement(dt) {
