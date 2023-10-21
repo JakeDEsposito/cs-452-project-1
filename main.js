@@ -34,6 +34,8 @@ const s_explosionCrunchs = Array.from({ length: 5 }).map((_, i) => `audio/explos
 
 const s_impactMetals = Array.from({ length: 5 }).map((_, i) => `audio/impactMetal_00${i}.ogg`).map(src => new Howl({ src, volume: 1.6 }))
 
+const s_forceFields = Array.from({ length: 5 }).map((_, i) => `audio/forceField_00${i}.ogg`).map(src => new Howl({ src, volume: 1.4 }))
+
 const s_laserRetros = Array.from({ length: 5 }).map((_, i) => `audio/laserRetro_00${i}.ogg`).map(src => new Howl({ src, volume: 0.8 }))
 
 const s_lowFrequencyExplosions = Array.from({ length: 2 }).map((_, i) => `audio/lowFrequency_explosion_00${i}.ogg`).map(src => new Howl({ src, volume: 2 }))
@@ -93,19 +95,16 @@ const canvas = document.getElementById("canvas")
 canvas.width = document.body.clientWidth
 canvas.height = document.body.clientHeight
 
-// TODO: Find good "zoom".
 const zoom = 0.5
 const width = canvas.clientWidth / 640 * 10 / zoom, height = canvas.clientHeight / 640 * 10 / zoom
 
 const scene = new Scene()
 
 scene.background = new TextureLoader().load("space.png")
-scene.background.wrapS = RepeatWrapping
-scene.background.wrapT = RepeatWrapping
+scene.background.wrapS = scene.background.wrapT = RepeatWrapping
 
-// TODO: Deside of repeat setting.
-// scene.background.repeat.set(1.5, 1.5)
-scene.background.repeat.set(2, 2)
+const aspectRatio = width / height
+scene.background.repeat.set(1 / zoom * aspectRatio, 1 / zoom)
 
 const camera = new OrthographicCamera(-width, width, height, -height, 0)
 
@@ -195,9 +194,6 @@ class Physical extends LineLoop {
     _isDisposed = false
 
     takeHit() {
-        // TODO: Make flashing material to show that the object is invulnerable.
-        // Or add force field sound effect.
-
         if (!this.#invulnerable) {
             this._health--
 
@@ -304,9 +300,13 @@ class Ship extends Physical {
     }
 
     takeHit() {
+        const priorHealth = this._health
+
         super.takeHit()
 
-        if (this._health > 0)
+        if (priorHealth === this._health)
+            s_forceFields.random().play()
+        else if (this._health > 0)
             s_impactMetals.random().play()
         else {
             s_explosionCrunchs.random().play()
@@ -315,11 +315,12 @@ class Ship extends Physical {
     }
 }
 
-const { PI, cos, sin, sqrt } = Math
+const { PI, cos, sin, sqrt, floor } = Math
 
-// TODO: Adjust values.
-// TODO: Consider making the ASTEROIDS cap variable to the time spent to make the difficulty increase over time.
-const ASTEROIDS_CAP = 20
+const ASTEROIDS_BASE_COUNT = 10
+let ASTEROIDS_CAP = ASTEROIDS_BASE_COUNT
+setInterval(() => ASTEROIDS_CAP += floor(score / 10) + 1, 10 * 1000)
+
 const MAX_ASTEROID_SIZE = 2
 const ASTEROIDS_SPAWN_DISTANCE_FROM_PLAYER_LOWER = sqrt(width * width + height * height) + MAX_ASTEROID_SIZE
 const ASTEROIDS_SPAWN_DISTANCE_FROM_PLAYER_UPPER = ASTEROIDS_SPAWN_DISTANCE_FROM_PLAYER_LOWER * 1.5
@@ -399,10 +400,9 @@ class Asteroid extends Physical {
             const size = this.#asteroidSize - 1
 
             if (size > 0) {
-                const count = randInt(1, 3)//4)
+                const count = randInt(1, 3)
                 const angleStep = PI * 2 / count
 
-                // BUG: Program crashes when objects spawn ontop of one another.
                 for (let i = 0; i < count; i++) {
                     const theta = i * angleStep
                     const pos = new Vector3((cos(theta) * (size + 1)), sin(theta) * (size + 1), 0)
@@ -488,7 +488,6 @@ let ship;
 
 let score = 0
 
-//FIXME: DEBUG
 const m_white = new LineBasicMaterial({ color: 0xffffff })
 const ll_debug = new Line(new BufferGeometry(), m_white)
 scene.add(ll_debug)
