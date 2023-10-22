@@ -220,11 +220,16 @@ class Physical extends LineLoop {
         scene.remove(this)
     }
 
-    disposeSafe() {
-        if (!this._isDisposed) {
-            this.dispose()
+    disposeSafe = (function () {
+        let executed = false
+        return function () {
+            if (!executed) {
+                executed = true
+                if (!this._isDisposed)
+                    this.dispose()
+            }
         }
-    }
+    })()
 }
 
 class ShipPart extends Physical {
@@ -352,8 +357,11 @@ class Ship extends Physical {
 
         if (priorHealth === this._health)
             s_forceFields.random().play()
-        else if (this._health > 0)
+        else if (this._health > 0) {
             s_impactMetals.random().play()
+
+            // TODO: Change material to some sort of flashing material.
+        }
         else {
             const resolution = shipPoints.length
             const angleStep = PI * 2 / resolution
@@ -545,7 +553,7 @@ class Bullet extends Physical {
         setTimeout(() => {
             // BUG: This still causes crashes.
             if (!this._isDisposed)
-                this.dispose()
+                this.disposeSafe()
         }, this.#aliveFor * 1000)
     }
 
