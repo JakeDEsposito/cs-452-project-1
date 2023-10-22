@@ -38,7 +38,7 @@ const s_impactMetals = Array.from({ length: 5 }).map((_, i) => `audio/impactMeta
 
 const s_forceFields = Array.from({ length: 5 }).map((_, i) => `audio/forceField_00${i}.ogg`).map(src => new Howl({ src, volume: 1.4 }))
 
-const s_laserRetros = Array.from({ length: 5 }).map((_, i) => `audio/laserRetro_00${i}.ogg`).map(src => new Howl({ src, volume: 0.8 }))
+const s_laserRetros = Array.from({ length: 5 }).map((_, i) => `audio/laserRetro_00${i}.ogg`).map(src => new Howl({ src, volume: 0.4 }))
 
 const s_lowFrequencyExplosions = Array.from({ length: 2 }).map((_, i) => `audio/lowFrequency_explosion_00${i}.ogg`).map(src => new Howl({ src, volume: 2 }))
 
@@ -589,6 +589,8 @@ let previousPauseButtonState = false
 const DEBUG = false
 const POST_PROCESSING = true
 
+setInterval(() => world.step(), world.integrationParameters.dt * 1000)
+
 function animate() {
     requestAnimationFrame(animate)
 
@@ -605,7 +607,7 @@ function animate() {
     const dt = clock.getDelta()
 
     if (gameOver) {
-        world.step()
+        // world.step()
 
         const objectsToUpdate = scene.getObjectsByUserDataName("type")
 
@@ -633,7 +635,7 @@ function animate() {
         }
     }
     else {
-        world.step()
+        // world.step()
 
         if (DEBUG) {
             const debugRender = world.debugRender()
