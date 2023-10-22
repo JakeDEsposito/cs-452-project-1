@@ -11,6 +11,10 @@ import { StaticShader } from "./shaders/StaticShader.js"
 
 import { Howl, Howler } from "howler"
 
+import { getGPUTier } from "detect-gpu"
+
+const gpuTier = await getGPUTier()
+
 Howler.volume(0.4)
 
 const { randFloat, randInt, clamp } = MathUtils
@@ -102,11 +106,16 @@ const width = canvas.clientWidth / 640 * 10 / zoom, height = canvas.clientHeight
 
 const scene = new Scene()
 
-scene.background = new TextureLoader().load("textures/space.png")
-scene.background.wrapS = scene.background.wrapT = RepeatWrapping
+// BUG: Due to performance issues, painting takes a log time on lower end systems.
+// Removing the background seems to fix some of those issues.
+// FIXME: I would like to bring back the background and get rid of the performance overheads it comes with.
+if (gpuTier.tier > 1) {
+    scene.background = new TextureLoader().load("textures/space.png")
+    scene.background.wrapS = scene.background.wrapT = RepeatWrapping
 
-const aspectRatio = width / height
-scene.background.repeat.set(1 / zoom * aspectRatio, 1 / zoom)
+    const aspectRatio = width / height
+    scene.background.repeat.set(1 / zoom * aspectRatio, 1 / zoom)
+}
 
 const camera = new OrthographicCamera(-width, width, height, -height, 0)
 
@@ -273,7 +282,7 @@ class ShipPart extends Physical {
 }
 
 class Ship extends Physical {
-    #rotateSpeed = 3.5
+    #rotateSpeed = 4.5
 
     #canFire = true
     #fireCooldown = 0.2
@@ -283,6 +292,8 @@ class Ship extends Physical {
 
         this._rigidBody = world.createRigidBody(RigidBodyDesc.dynamic())
         this._rigidBody.setAdditionalMass(0.1) // TODO: Adjust mass.
+        // FIXME: Center of mass is not at local 0, 0.
+        // this._rigidBody.setAdditionalMassProperties(0.1, { x: 0, y: 0 }, 0.03)
 
         this._collider = world.createCollider(ColliderDesc.triangle(
             new Vector3(0, 1),
@@ -297,21 +308,18 @@ class Ship extends Physical {
         }
     }
 
-    #movement(dt) {
+    #movement() {
         const { cos, sin } = Math
 
         if (keyHandler.isKeyPressed("w"))
-            this._rigidBody.applyImpulse(new Vector2(-sin(this.rotation.z), cos(this.rotation.z)).multiplyScalar(0.2))
+            this._rigidBody.applyImpulse(new Vector2(-sin(this.rotation.z), cos(this.rotation.z)).multiplyScalar(0.2), true)
 
-        if (keyHandler.isKeyPressed("a"))
-            this.rotation.z += this.#rotateSpeed * dt
-        if (keyHandler.isKeyPressed("d"))
-            this.rotation.z -= this.#rotateSpeed * dt
+        this._rigidBody.setAngvel((keyHandler.isKeyPressed("a") - keyHandler.isKeyPressed("d")) * this.#rotateSpeed, true)
 
         const { x, y } = this._rigidBody.translation()
         this.position.set(x, y, 0)
 
-        this._rigidBody.setRotation(this.rotation.z, true)
+        this.rotation.z = this._rigidBody.rotation()
 
         {
             const { x, y } = this._rigidBody.linvel()
@@ -564,7 +572,7 @@ class Bullet extends Physical {
         this.rotation.z = this._rigidBody.rotation()
     }
 
-    update(dt) {
+    update() {
         this.#movement()
     }
 }
@@ -587,7 +595,7 @@ let isPaused = false
 let previousPauseButtonState = false
 
 const DEBUG = false
-const POST_PROCESSING = true
+const POST_PROCESSING = gpuTier.tier > 1
 
 setInterval(() => world.step(), world.integrationParameters.dt * 1000)
 
@@ -607,8 +615,6 @@ function animate() {
     const dt = clock.getDelta()
 
     if (gameOver) {
-        // world.step()
-
         const objectsToUpdate = scene.getObjectsByUserDataName("type")
 
         for (const obj of objectsToUpdate) {
@@ -635,8 +641,6 @@ function animate() {
         }
     }
     else {
-        // world.step()
-
         if (DEBUG) {
             const debugRender = world.debugRender()
 
@@ -644,13 +648,13 @@ function animate() {
         }
 
         if (!ship._isDisposed)
-            ship.update(dt)
+            ship.update()
 
         /** @type {Bullet[]} */
         const bullets = scene.getObjectsByUserDataProperty("type", "bullet")
 
         for (const bullet of bullets) {
-            bullet.update(dt)
+            bullet.update()
         }
 
         /** @type {Asteroid[]} */
@@ -713,7 +717,7 @@ function animate() {
         camera.position.copy(ship.position)
         camera.position.setZ(0.001)
 
-        scene.background.offset.copy(ship.position).divideScalar(50)
+        scene.background?.offset.copy(ship.position).divideScalar(50)
 
         const scoreString = new String(score)
         if (4 - scoreString.length >= 0)

@@ -16,6 +16,8 @@ Libraries were an important part of this project. Without them, development woul
     * Audio playback and Manipulation
 * [Rapier](https://rapier.rs)
     * 2D Physics
+* [Detect GPU](https://github.com/pmndrs/detect-gpu#readme)
+    * Performance Detection
 
 ## Game Mechanics
 
@@ -113,6 +115,8 @@ Film Grain & Scanlines Shader - [alteredq](http://alteredqualia.com)
 [howler.js](https://howlerjs.com)
 
 [Rapier](https://rapier.rs)
+
+[Detect GPU](https://github.com/pmndrs/detect-gpu#readme)
 
 # GitHub Pages
 
