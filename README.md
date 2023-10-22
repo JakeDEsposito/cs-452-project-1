@@ -113,3 +113,7 @@ Film Grain & Scanlines Shader - [alteredq](http://alteredqualia.com)
 [howler.js](https://howlerjs.com)
 
 [Rapier](https://rapier.rs)
+
+# GitHub Pages
+
+[Link to Live Page](https://jakedesposito.github.io/cs-452-project-1)
