@@ -324,7 +324,7 @@ class Ship extends Physical {
         const bullet = new Bullet(m_green)
 
         bullet._rigidBody.setRotation(this.rotation.z)
-        bullet._rigidBody.setTranslation(this.position.clone().add(new Vector3(0, 1, 0).applyEuler(this.rotation)))
+        bullet._rigidBody.setTranslation(this.position.clone().add(new Vector3(0, 1.2, 0).applyEuler(this.rotation)))
 
         bullet._rigidBody.setLinvel(this._rigidBody.linvel())
 
