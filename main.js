@@ -26,7 +26,7 @@ Array.prototype.random = function () {
 let allowGameRestart = true
 
 const s_gameover = new Howl({
-    src: "audio/Undertale_OST-Determination.mp3",
+    src: "audio/Undertale_OST-Determination.mp3"
 })
 
 const s_explosionCrunchs = Array.from({ length: 5 }).map((_, i) => `audio/explosionCrunch_00${i}.ogg`).map(src => new Howl({
@@ -249,7 +249,7 @@ class ShipPart extends Physical {
         )
 
         this._rigidBody = world.createRigidBody(RigidBodyDesc.dynamic())
-        this._rigidBody.setAdditionalMass(0.01) // TODO: Adjust mass.
+        this._rigidBody.setAdditionalMass(0.01)
         this._rigidBody.setAngularDamping(0.1)
 
         this._collider = world.createCollider(
@@ -291,9 +291,6 @@ class Ship extends Physical {
         super(geometry, material)
 
         this._rigidBody = world.createRigidBody(RigidBodyDesc.dynamic())
-        this._rigidBody.setAdditionalMass(0.1) // TODO: Adjust mass.
-        // FIXME: Center of mass is not at local 0, 0.
-        // this._rigidBody.setAdditionalMassProperties(0.1, { x: 0, y: 0 }, 0.03)
 
         this._collider = world.createCollider(ColliderDesc.triangle(
             new Vector3(0, 1),
@@ -308,13 +305,13 @@ class Ship extends Physical {
         }
     }
 
-    #movement() {
+    #movement(dt) {
         const { cos, sin } = Math
 
         if (keyHandler.isKeyPressed("w"))
-            this._rigidBody.applyImpulse(new Vector2(-sin(this.rotation.z), cos(this.rotation.z)).multiplyScalar(0.2), true)
+            this._rigidBody.applyImpulse(new Vector2(-sin(this.rotation.z), cos(this.rotation.z)).multiplyScalar(0.6), true)
 
-        this._rigidBody.setAngvel((keyHandler.isKeyPressed("a") - keyHandler.isKeyPressed("d")) * this.#rotateSpeed, true)
+        this._rigidBody.setRotation(this._rigidBody.rotation() + (keyHandler.isKeyPressed("a") - keyHandler.isKeyPressed("d")) * this.#rotateSpeed * dt, true)
 
         const { x, y } = this._rigidBody.translation()
         this.position.set(x, y, 0)
@@ -324,7 +321,7 @@ class Ship extends Physical {
         {
             const { x, y } = this._rigidBody.linvel()
             const length = new Vector2(x, y).length()
-            s_spaceEngineLow.rate(clamp(length / 10, 0, 3))
+            s_spaceEngineLow.rate(clamp(length / 20, 0, 3))
         }
     }
 
@@ -461,7 +458,7 @@ class Asteroid extends Physical {
         this.#asteroidSize = size
 
         this._rigidBody = world.createRigidBody(RigidBodyDesc.dynamic())
-        this._rigidBody.setAdditionalMass(size) // TODO: Adjust mass.
+        this._rigidBody.setAdditionalMass(size)
 
         this._collider = world.createCollider(
             ColliderDesc.ball(size),
@@ -539,7 +536,7 @@ class Bullet extends Physical {
         ]), material)
 
         this._rigidBody = world.createRigidBody(RigidBodyDesc.dynamic())
-        this._rigidBody.setAdditionalMass(1) // TODO: Adjust mass.
+        this._rigidBody.setAdditionalMass(1)
 
         this._collider = world.createCollider(
             ColliderDesc.segment(
@@ -559,7 +556,6 @@ class Bullet extends Physical {
         this._health = 1
 
         setTimeout(() => {
-            // BUG: This still causes crashes.
             if (!this._isDisposed)
                 this.disposeSafe()
         }, this.#aliveFor * 1000)
@@ -648,7 +644,7 @@ function animate() {
         }
 
         if (!ship._isDisposed)
-            ship.update()
+            ship.update(dt)
 
         /** @type {Bullet[]} */
         const bullets = scene.getObjectsByUserDataProperty("type", "bullet")
@@ -660,7 +656,6 @@ function animate() {
         /** @type {Asteroid[]} */
         const asteroids = scene.getObjectsByUserDataProperty("type", "asteroid")
 
-        // TODO: Need to work on this spawning system.
         for (let i = 0; i < ASTEROIDS_CAP - asteroids.length; i++) {
 
             const theta = randFloat(0, PI * 2)
@@ -696,6 +691,9 @@ function animate() {
             asteroid.update(dt)
 
             world.contactsWith(asteroid._collider, ({ handle }) => {
+                if (asteroid._isDisposed)
+                    return
+
                 const otherObj = objectsWithColliderHandle.find(({ userData: { colliderHandle } }) => colliderHandle === handle)
 
                 if (otherObj.userData.type === "bullet") {
@@ -706,7 +704,7 @@ function animate() {
                     }
                 }
 
-                if (otherObj.userData.type !== "asteroid" | otherObj.userData.type !== "shippart") {
+                if (!(otherObj.userData.type === "asteroid" | otherObj.userData.type === "shippart")) {
                     // BUG: For whatever reason, the other object needs to take the hit first. I have no clue why.
                     otherObj.takeHit()
                     asteroid.takeHit()
@@ -729,6 +727,7 @@ function animate() {
 
 
     }
+
     // Rendering
     if (POST_PROCESSING) {
         FilmPass.uniforms["time"].value += dt
@@ -743,6 +742,8 @@ function animate() {
 
 if (WebGL.isWebGLAvailable()) {
     document.body.appendChild(renderer.domElement)
+
+    document.getElementById("readytoplay").textContent = "Press Space to Play"
 
     animate()
 }

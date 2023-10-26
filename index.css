@@ -1,0 +1,48 @@
+@font-face {
+    font-family: Hyperspace;
+    src: url("fonts/Hyperspace-JvEM.ttf");
+}
+
+body {
+    font-family: Hyperspace, "Courier New", Courier, monospace;
+    color: #00ff00;
+
+    background-color: black;
+
+    text-transform: uppercase;
+    user-select: none;
+}
+
+.fixed-position {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+}
+
+#canvas {
+    z-index: -1;
+}
+
+.center {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+
+    text-align: center;
+}
+
+#gameui {
+    margin: 2rem;
+    font-size: 2rem;
+}
+
+#gameui p {
+    margin: 0 0.5rem;
+}
+
+#pausedui {
+    background-color: #668b6540;
+}
