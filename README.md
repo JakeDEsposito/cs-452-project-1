@@ -72,6 +72,8 @@ Bullet would have a similar issue. Since a bullet could dispose of itself after 
 1. The bullets dispose timer runs out and the bullet is attempted to be disposed again.
 1. A crash would occur due to calling a function of an object that does not exist.
 
+There were other issues with collision. Some I actually enjoyed and kept in the game. For example, if you see an asteroid speed past you, this is most likely because it was spawned inside another asteroid and as a result it gets pushed out at a high velocity. Some issues would crash the game. For instance, take three objects, all of which are colliding. The first two objects get disposed of just fine. However, when it comes around to handling the third object, the program falls apart as functions are called on an already disposed object.
+
 This was an annoying yet fun issue to solve as I was able to use the Chrome Debugger for the first time.
 
 # Controls
@@ -90,7 +92,7 @@ This was an annoying yet fun issue to solve as I was able to use the Chrome Debu
 
 [Determination](https://www.youtube.com/watch?v=h1wSPmlZV-w) - Toby Fox | UNDERTALE Soundtrack
 
-Sci-Fi Sounds (1.0) - [Kenney](www.kenney.nl)
+Sci-Fi Sounds (1.0) - [Kenney](https://www.kenney.nl)
 
 ## Textures
 
@@ -102,9 +104,9 @@ Sci-Fi Sounds (1.0) - [Kenney](www.kenney.nl)
 
 ## Shaders
 
-Bad TV Shader - [Felix Turner](www.airtight.cc)
+Bad TV Shader - [Felix Turner](https://www.airtight.cc)
 
-Static Effect Shader - [Felix Turner](www.airtight.cc)
+Static Effect Shader - [Felix Turner](https://www.airtight.cc)
 
 Film Grain & Scanlines Shader - [alteredq](http://alteredqualia.com)
 
