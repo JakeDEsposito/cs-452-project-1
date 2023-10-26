@@ -311,7 +311,8 @@ class Ship extends Physical {
         if (keyHandler.isKeyPressed("w"))
             this._rigidBody.applyImpulse(new Vector2(-sin(this.rotation.z), cos(this.rotation.z)).multiplyScalar(0.6), true)
 
-        this._rigidBody.setRotation(this._rigidBody.rotation() + (keyHandler.isKeyPressed("a") - keyHandler.isKeyPressed("d")) * this.#rotateSpeed * dt, true)
+        this.rotation.z += (keyHandler.isKeyPressed("a") - keyHandler.isKeyPressed("d")) * this.#rotateSpeed * dt
+        this._rigidBody.setRotation(this.rotation.z, true)
 
         const { x, y } = this._rigidBody.translation()
         this.position.set(x, y, 0)
@@ -632,6 +633,8 @@ function animate() {
             s_spaceEngineLow.play()
 
             score = 0
+
+            ASTEROIDS_CAP = ASTEROIDS_BASE_COUNT
 
             gameOver = false
         }
