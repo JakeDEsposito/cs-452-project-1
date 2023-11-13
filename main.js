@@ -13,6 +13,28 @@ import { Howl, Howler } from "howler"
 
 import { getGPUTier } from "detect-gpu"
 
+/*
+States
+Rays (12)
+Rotation (1)
+Velocity (2)
+*/
+
+/*
+Actions:
+Rotate left/right (2)
+Move Foward (1)
+Shoot (1)
+Do Nothing (1)
+*/
+const agent = new RL.DQNAgent({
+    // TODO: Adjust values
+    getNumStates: () => 12 + 1 + 2,
+    getMaxNumActions: () => 5
+}, {
+    alpha: 0.01
+})
+
 const gpuTier = await getGPUTier()
 
 Howler.volume(0.4)
@@ -53,7 +75,7 @@ const s_spaceEngineLow = new Howl({
 })
 s_spaceEngineLow.rate(0)
 
-import { init, World, RigidBodyDesc, ColliderDesc } from "@dimforge/rapier2d"
+import { init, World, RigidBodyDesc, ColliderDesc, Ray } from "@dimforge/rapier2d"
 
 await init()
 
@@ -308,10 +330,10 @@ class Ship extends Physical {
     #movement(dt) {
         const { cos, sin } = Math
 
-        if (keyHandler.isKeyPressed("w"))
-            this._rigidBody.applyImpulse(new Vector2(-sin(this.rotation.z), cos(this.rotation.z)).multiplyScalar(0.6), true)
+        // if (keyHandler.isKeyPressed("w"))
+        //     this._rigidBody.applyImpulse(new Vector2(-sin(this.rotation.z), cos(this.rotation.z)).multiplyScalar(0.6), true)
 
-        this.rotation.z += (keyHandler.isKeyPressed("a") - keyHandler.isKeyPressed("d")) * this.#rotateSpeed * dt
+        // this.rotation.z += (keyHandler.isKeyPressed("a") - keyHandler.isKeyPressed("d")) * this.#rotateSpeed * dt
         this._rigidBody.setRotation(this.rotation.z, true)
 
         const { x, y } = this._rigidBody.translation()
@@ -343,21 +365,59 @@ class Ship extends Physical {
     }
 
     update(dt) {
+        const { cos, sin } = Math
+
+        const raysCount = 12
+
+        const rays = Array.from({length: raysCount}).map((_, i) => {
+            const resolution = raysCount
+            const angleStep = PI * 2 / resolution
+            const theta = i * angleStep
+            return new Ray(this.position, new Vector2(cos(theta)), sin(theta))
+        })
+
+        const raysLengths = rays.map(ray => world.castRay(ray, 999, false, null, null, this._collider)).map(x => x?.toi ?? 999)
+
+        const {x, y} = this._rigidBody.linvel()
+
+        const action = agent.act([...raysLengths, this.rotation.z, x, y])
+
+        switch (action) {
+            case 0: // Move Forward
+                this._rigidBody.applyImpulse(new Vector2(-sin(this.rotation.z), cos(this.rotation.z)).multiplyScalar(0.6), true)
+                break
+            case 1: // Rotate Left
+                this.rotation.z += this.#rotateSpeed * dt
+                break
+            case 2: // Rotate Left
+                this.rotation.z -= this.#rotateSpeed * dt
+                break
+            case 3: // Shoot
+                if (this.#canFire) {
+                    this.#fire()
+
+                    this.#canFire = false
+                    setTimeout(() => this.#canFire = true, this.#fireCooldown * 1000)
+                }
+                break
+            // There is a 5th action reserved for doing none of the above.
+        }
+
         this.#movement(dt)
 
-        // TODO: Consider adding cooldown to shooting so that it wont get abused.
-        if (this.#canFire && keyHandler.isKeyPressed(" ")) {
-            this.#fire()
+        // // TODO: Consider adding cooldown to shooting so that it wont get abused.
+        // if (this.#canFire && keyHandler.isKeyPressed(" ")) {
+        //     this.#fire()
 
-            this.#canFire = false
-            setTimeout(() => this.#canFire = true, this.#fireCooldown * 1000)
-        }
+        //     this.#canFire = false
+        //     setTimeout(() => this.#canFire = true, this.#fireCooldown * 1000)
+        // }
     }
 
     takeHit() {
         const priorHealth = this._health
 
-        const linvel = this._rigidBody.linvel()
+        agent.learn(-5)
 
         super.takeHit()
 
@@ -369,41 +429,6 @@ class Ship extends Physical {
             // TODO: Change material to some sort of flashing material.
         }
         else {
-            const resolution = shipPoints.length
-            const angleStep = PI * 2 / resolution
-
-            for (let i = 0; i < resolution; i++) {
-                const points = i !== shipPoints.length - 1 ? [
-                    shipPoints[i],
-                    shipPoints[i + 1]
-                ] : [
-                    shipPoints[i],
-                    shipPoints[0]
-                ]
-
-                const shippart = new ShipPart(
-                    points,
-                    this.material
-                )
-
-                shippart._rigidBody.setTranslation(this.position)
-                shippart._rigidBody.setRotation(this.rotation.z)
-
-                shippart._rigidBody.setLinvel(linvel)
-
-                const theta = i * angleStep
-
-                const force = new Vector2((cos(theta)), sin(theta)).multiplyScalar(1.2)
-
-                shippart._rigidBody.applyImpulseAtPoint(force, this.position, true)
-
-                scene.add(shippart)
-
-                shippart.update()
-            }
-
-            s_explosionCrunchs.random().play()
-            allowGameRestart = false
             s_spaceEngineLow.stop()
             gameOver = true
         }
@@ -592,22 +617,22 @@ let isPaused = false
 let previousPauseButtonState = false
 
 const DEBUG = false
-const POST_PROCESSING = gpuTier.tier > 1
+const POST_PROCESSING = false //gpuTier.tier > 1
 
 setInterval(() => world.step(), world.integrationParameters.dt * 1000)
 
 function animate() {
     requestAnimationFrame(animate)
 
-    if (!previousPauseButtonState & keyHandler.isKeyPressed("Escape") & !gameOver)
-        isPaused = !isPaused
+    // if (!previousPauseButtonState & keyHandler.isKeyPressed("Escape") & !gameOver)
+    //     isPaused = !isPaused
 
-    previousPauseButtonState = keyHandler.isKeyPressed("Escape")
+    // previousPauseButtonState = keyHandler.isKeyPressed("Escape")
 
-    document.getElementById("pausedui").style.display = isPaused ? "" : "none"
+    // document.getElementById("pausedui").style.display = isPaused ? "" : "none"
 
-    if (isPaused)
-        return
+    // if (isPaused)
+    //     return
 
     const dt = clock.getDelta()
 
@@ -618,7 +643,7 @@ function animate() {
             obj.update()
         }
 
-        if (allowGameRestart && keyHandler.isKeyPressed(" ")) {
+        if (true) {
             scene.getObjectsByUserDataName("type").forEach(obj => obj.disposeSafe())
 
             s_gameover.stop()
@@ -701,6 +726,8 @@ function animate() {
 
                 if (otherObj.userData.type === "bullet") {
                     score++
+
+                    agent.learn(2)
 
                     if (!(score % 25)) {
                         ship._health++
