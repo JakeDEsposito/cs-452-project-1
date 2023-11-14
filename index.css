@@ -46,3 +46,7 @@ body {
 #pausedui {
     background-color: #668b6540;
 }
+
+label {
+    font-size: 1.2rem;
+}

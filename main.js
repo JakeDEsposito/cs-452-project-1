@@ -19,6 +19,7 @@ Rays (12)
 Rotation (1)
 Velocity (2)
 */
+const RAYS_COUNT = 360
 
 /*
 Actions:
@@ -29,7 +30,7 @@ Do Nothing (1)
 */
 const agent = new RL.DQNAgent({
     // TODO: Adjust values
-    getNumStates: () => 12 + 1 + 2,
+    getNumStates: () => RAYS_COUNT * 3 + 1 + 2,
     getMaxNumActions: () => 5
 }, {
     alpha: 0.01
@@ -39,7 +40,7 @@ const gpuTier = await getGPUTier()
 
 Howler.volume(0.4)
 
-const { randFloat, randInt, clamp } = MathUtils
+const { randFloat, randInt, clamp, mapLinear } = MathUtils
 
 Array.prototype.random = function () {
     return this[randInt(0, this.length - 1)]
@@ -365,22 +366,46 @@ class Ship extends Physical {
     }
 
     update(dt) {
+        let learned = false
+
         const { cos, sin } = Math
 
-        const raysCount = 12
+        const rayMaxLength = 50
 
-        const rays = Array.from({length: raysCount}).map((_, i) => {
-            const resolution = raysCount
-            const angleStep = PI * 2 / resolution
+        const angleStep = PI * 2 / RAYS_COUNT
+        const rays = Array.from({ length: RAYS_COUNT }).map((_, i) => {
             const theta = i * angleStep
-            return new Ray(this.position, new Vector2(cos(theta)), sin(theta))
+            const { x, y } = this.position
+            return new Ray(new Vector2(x, y), new Vector2(cos(theta)), sin(theta))
         })
 
-        const raysLengths = rays.map(ray => world.castRay(ray, 999, false, null, null, this._collider)).map(x => x?.toi ?? 999)
+        const r = []
+        for (const ray of rays) {
+            const cast = world.castRay(ray, rayMaxLength, false, null, null, this._collider)
 
-        const {x, y} = this._rigidBody.linvel()
+            if (cast) {
+                r.push(cast.toi / rayMaxLength)
 
-        const action = agent.act([...raysLengths, this.rotation.z, x, y])
+                const handle = cast.collider.handle
+                const object = scene.getObjectsByUserDataName("colliderHandle").find(({ userData: { colliderHandle } }) => colliderHandle === handle)
+
+                const { x, y } = object._rigidBody.linvel()
+                r.push(x)
+                r.push(y)
+            }
+            else {
+                r.push(1)
+                r.push(0)
+                r.push(0)
+            }
+        }
+        const { x, y } = this._rigidBody.linvel()
+        // const { x, y } = this.position
+
+        const action = agent.act([...r, mapLinear(this.rotation.z, -PI, PI, -1, 1), x, y])
+
+        // TODO: Create a way to reward the agent for moving away from oncoming asteroids.
+        // TODO: Consider punishing shooting when it cannot shoot because of the cooldown.
 
         switch (action) {
             case 0: // Move Forward
@@ -394,7 +419,26 @@ class Ship extends Physical {
                 break
             case 3: // Shoot
                 if (this.#canFire) {
-                    this.#fire()
+                    // console.log("Pew!")
+                    const vec = new Vector2(-sin(this.rotation.z), cos(this.rotation.z))
+                    const ray = new Ray(this.position, vec)
+
+                    const cast = world.castRay(ray, rayMaxLength, false, null, null, this._collider)
+                    if (cast) {
+                        // console.log("Hit an asteroid")
+
+                        const handle = cast.collider.handle
+
+                        const object = scene.getObjectsByUserDataName("colliderHandle").find(({ userData: { colliderHandle } }) => colliderHandle === handle)
+
+                        object.takeHit()
+
+                        agent.learn(1)
+
+                        score++
+
+                        learned = true
+                    }
 
                     this.#canFire = false
                     setTimeout(() => this.#canFire = true, this.#fireCooldown * 1000)
@@ -412,12 +456,14 @@ class Ship extends Physical {
         //     this.#canFire = false
         //     setTimeout(() => this.#canFire = true, this.#fireCooldown * 1000)
         // }
+
+        return learned
     }
 
     takeHit() {
         const priorHealth = this._health
 
-        agent.learn(-5)
+        agent.learn(-1)
 
         super.takeHit()
 
@@ -431,7 +477,10 @@ class Ship extends Physical {
         else {
             s_spaceEngineLow.stop()
             gameOver = true
+            console.log("Died!")
         }
+
+        return true
     }
 }
 
@@ -621,18 +670,32 @@ const POST_PROCESSING = false //gpuTier.tier > 1
 
 setInterval(() => world.step(), world.integrationParameters.dt * 1000)
 
+// From https://stackoverflow.com/questions/34156282/how-do-i-save-json-to-local-text-file#answer-34156339
+function download(content, fileName, contentType) {
+    var a = document.createElement("a");
+    var file = new Blob([content], { type: contentType });
+    a.href = URL.createObjectURL(file);
+    a.download = fileName;
+    a.click();
+}
+
+document.getElementById("save").addEventListener("click", () => {
+    download(
+        JSON.stringify(agent.toJSON()),
+        "training.json",
+        "application/json"
+    )
+    console.log("Saving training data.")
+})
+
+document.getElementById("load").addEventListener("change", function () {
+    const file = this.files.item(0)
+    console.log("Loading training data.")
+    file.text().then(text => agent.fromJSON(JSON.parse(text)))
+})
+
 function animate() {
     requestAnimationFrame(animate)
-
-    // if (!previousPauseButtonState & keyHandler.isKeyPressed("Escape") & !gameOver)
-    //     isPaused = !isPaused
-
-    // previousPauseButtonState = keyHandler.isKeyPressed("Escape")
-
-    // document.getElementById("pausedui").style.display = isPaused ? "" : "none"
-
-    // if (isPaused)
-    //     return
 
     const dt = clock.getDelta()
 
@@ -671,8 +734,9 @@ function animate() {
             ll_debug.geometry.setAttribute("position", new BufferAttribute(debugRender.vertices, 2))
         }
 
+        let learned = false
         if (!ship._isDisposed)
-            ship.update(dt)
+            learned = ship.update(dt)
 
         /** @type {Bullet[]} */
         const bullets = scene.getObjectsByUserDataProperty("type", "bullet")
@@ -727,8 +791,6 @@ function animate() {
                 if (otherObj.userData.type === "bullet") {
                     score++
 
-                    agent.learn(2)
-
                     if (!(score % 25)) {
                         ship._health++
                     }
@@ -736,11 +798,17 @@ function animate() {
 
                 if (!(otherObj.userData.type === "asteroid" | otherObj.userData.type === "shippart")) {
                     // BUG: For whatever reason, the other object needs to take the hit first. I have no clue why.
-                    otherObj.takeHit()
+                    const res = otherObj.takeHit()
                     asteroid.takeHit()
+
+                    if (res)
+                        learned = true
                 }
             })
         }
+
+        if (!learned)
+            agent.learn(0)
 
         camera.position.copy(ship.position)
         camera.position.setZ(0.001)
