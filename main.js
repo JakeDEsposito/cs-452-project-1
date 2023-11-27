@@ -313,7 +313,7 @@ class Once {
     unlock = () => this.#locked = false
 
     do(f) {
-        if(!this.#locked) {
+        if (!this.#locked) {
             this.#locked = true
             f()
         }
@@ -388,7 +388,7 @@ class Ship extends Physical {
 
         const rayMaxLength = 50
 
-                const angleStep = PI * 2 / RAYS_COUNT
+        const angleStep = PI * 2 / RAYS_COUNT
         const rays = Array.from({ length: RAYS_COUNT }).map((_, i) => {
             const theta = i * angleStep
             const { x, y } = this.position
@@ -417,7 +417,7 @@ class Ship extends Physical {
         }
         const { x, y } = this._rigidBody.linvel()
         // const { x, y } = this.position
-        
+
         const action = agent.act([...(r.flat()), mapLinear(this.rotation.z, -PI, PI, -1, 1), x, y, Number(this.#canFire)])
         // TODO: Create a way to reward the agent for moving away from oncoming asteroids.
         // TODO: Consider punishing shooting when it cannot shoot because of the cooldown.
@@ -453,12 +453,12 @@ class Ship extends Physical {
             case 1: // Rotate Counter Clockwise
                 this.rotation.z += this.#rotateSpeed * dt
                 if (diff < 0)
-                    agent.learn(-0.1)
+                    doOnce.do(() => agent.learn(0.1))
                 break
             case 2: // Rotate Clockwise
                 this.rotation.z -= this.#rotateSpeed * dt
                 if (diff > 0)
-                    agent.learn(0.1)
+                    doOnce.do(() => agent.learn(0.1))
                 break
             case 3: // Shoot
                 if (this.#canFire) {
