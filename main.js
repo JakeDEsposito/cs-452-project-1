@@ -28,6 +28,8 @@ Move Foward (1)
 Shoot (1)
 Do Nothing (1)
 */
+
+// TODO: Set a gamma, Gamma represents how important the future is.
 const agent = new RL.DQNAgent({
     // TODO: Adjust values
     getNumStates: () => RAYS_COUNT * 3 + 1 + 2,
@@ -376,7 +378,7 @@ class Ship extends Physical {
         const rays = Array.from({ length: RAYS_COUNT }).map((_, i) => {
             const theta = i * angleStep
             const { x, y } = this.position
-            return new Ray(new Vector2(x, y), new Vector2(cos(theta)), sin(theta))
+            return new Ray(new Vector2(x, y), new Vector2(sin(theta), cos(theta)))
         })
 
         const r = []
@@ -384,48 +386,76 @@ class Ship extends Physical {
             const cast = world.castRay(ray, rayMaxLength, false, null, null, this._collider)
 
             if (cast) {
-                r.push(cast.toi / rayMaxLength)
-
                 const handle = cast.collider.handle
                 const object = scene.getObjectsByUserDataName("colliderHandle").find(({ userData: { colliderHandle } }) => colliderHandle === handle)
 
                 const { x, y } = object._rigidBody.linvel()
-                r.push(x)
-                r.push(y)
+
+                r.push([
+                    cast.toi / rayMaxLength,
+                    x,
+                    y
+                ])
             }
             else {
-                r.push(1)
-                r.push(0)
-                r.push(0)
+                r.push([1, 0, 0])
             }
         }
         const { x, y } = this._rigidBody.linvel()
         // const { x, y } = this.position
 
-        const action = agent.act([...r, mapLinear(this.rotation.z, -PI, PI, -1, 1), x, y])
+        const action = agent.act([...(r.flat()), mapLinear(this.rotation.z, -PI, PI, -1, 1), x, y])
 
         // TODO: Create a way to reward the agent for moving away from oncoming asteroids.
         // TODO: Consider punishing shooting when it cannot shoot because of the cooldown.
 
-        switch (action) {
+        // const rotNorm = mapLinear(this.rotation.z, -PI, PI, 0, RAYS_COUNT)
+        // const rotError = 2
+        // const rCloseTORotNorm = r.filter(([lengthNorm], i) => lengthNorm < 1 && rotNorm - rotError < i && rotNorm + rotError > i)
+
+        //const t = r.filter(([lengthNorm]) => lengthNorm < 1)
+
+
+
+        // I want to prioritize rotating toward targets and shooting them.
+
+        // Closest target
+        let closest = r[0]
+        for (const ray of r) {
+            if (ray[0] < closest[0])
+                closest = ray
+        }
+
+        const closestIndex = r.indexOf(closest)
+        const angle = ((-this.rotation.z * 180 / PI) + 360) % 360
+        const diff = closestIndex - angle
+
+        // When the diff is positive, you want to rotate clockwise.
+        // When the diff is negative, you want to rotate couter clockwise.
+
+        switch (1) {
             case 0: // Move Forward
                 this._rigidBody.applyImpulse(new Vector2(-sin(this.rotation.z), cos(this.rotation.z)).multiplyScalar(0.6), true)
                 break
-            case 1: // Rotate Left
+            case 1: // Rotate Counter Clockwise
                 this.rotation.z += this.#rotateSpeed * dt
+                if (diff < 0)
+                    agent.learn(-0.1)
                 break
-            case 2: // Rotate Left
+            case 2: // Rotate Clockwise
                 this.rotation.z -= this.#rotateSpeed * dt
+                if (diff > 0)
+                    agent.learn(0.1)
                 break
             case 3: // Shoot
                 if (this.#canFire) {
-                    // console.log("Pew!")
+                    console.log("Pew!")
                     const vec = new Vector2(-sin(this.rotation.z), cos(this.rotation.z))
                     const ray = new Ray(this.position, vec)
 
                     const cast = world.castRay(ray, rayMaxLength, false, null, null, this._collider)
                     if (cast) {
-                        // console.log("Hit an asteroid")
+                        console.log("Hit an asteroid")
 
                         const handle = cast.collider.handle
 
@@ -446,6 +476,8 @@ class Ship extends Physical {
                 break
             // There is a 5th action reserved for doing none of the above.
         }
+
+        // TODO: See if there is a way to look back and learn from previous steps.
 
         this.#movement(dt)
 
