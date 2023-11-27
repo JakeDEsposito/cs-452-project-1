@@ -18,6 +18,7 @@ States
 Rays (12)
 Rotation (1)
 Velocity (2)
+Can Shoot (1)
 */
 const RAYS_COUNT = 360
 
@@ -32,7 +33,7 @@ Do Nothing (1)
 // TODO: Set a gamma, Gamma represents how important the future is.
 const agent = new RL.DQNAgent({
     // TODO: Adjust values
-    getNumStates: () => RAYS_COUNT * 3 + 1 + 2,
+    getNumStates: () => RAYS_COUNT * 3 + 1 + 2 + 1,
     getMaxNumActions: () => 5
 }, {
     alpha: 0.01
@@ -306,6 +307,21 @@ class ShipPart extends Physical {
     }
 }
 
+class Once {
+    #locked = false
+
+    unlock = () => this.#locked = false
+
+    do(f) {
+        if(!this.#locked) {
+            this.#locked = true
+            f()
+        }
+    }
+}
+
+const doOnce = new Once()
+
 class Ship extends Physical {
     #rotateSpeed = 4.5
 
@@ -368,13 +384,11 @@ class Ship extends Physical {
     }
 
     update(dt) {
-        let learned = false
-
         const { cos, sin } = Math
 
         const rayMaxLength = 50
 
-        const angleStep = PI * 2 / RAYS_COUNT
+                const angleStep = PI * 2 / RAYS_COUNT
         const rays = Array.from({ length: RAYS_COUNT }).map((_, i) => {
             const theta = i * angleStep
             const { x, y } = this.position
@@ -403,9 +417,8 @@ class Ship extends Physical {
         }
         const { x, y } = this._rigidBody.linvel()
         // const { x, y } = this.position
-
-        const action = agent.act([...(r.flat()), mapLinear(this.rotation.z, -PI, PI, -1, 1), x, y])
-
+        
+        const action = agent.act([...(r.flat()), mapLinear(this.rotation.z, -PI, PI, -1, 1), x, y, Number(this.#canFire)])
         // TODO: Create a way to reward the agent for moving away from oncoming asteroids.
         // TODO: Consider punishing shooting when it cannot shoot because of the cooldown.
 
@@ -463,15 +476,16 @@ class Ship extends Physical {
 
                         object.takeHit()
 
-                        agent.learn(1)
+                        doOnce.do(() => agent.learn(1))
 
                         score++
-
-                        learned = true
                     }
 
                     this.#canFire = false
                     setTimeout(() => this.#canFire = true, this.#fireCooldown * 1000)
+                }
+                else {
+                    doOnce.do(() => agent.learn(-0.1))
                 }
                 break
             // There is a 5th action reserved for doing none of the above.
@@ -488,14 +502,12 @@ class Ship extends Physical {
         //     this.#canFire = false
         //     setTimeout(() => this.#canFire = true, this.#fireCooldown * 1000)
         // }
-
-        return learned
     }
 
     takeHit() {
         const priorHealth = this._health
 
-        agent.learn(-1)
+        doOnce.do(() => agent.learn(-1))
 
         super.takeHit()
 
@@ -680,8 +692,6 @@ class Bullet extends Physical {
     }
 }
 
-const keyHandler = new KeyHandler()
-
 const clock = new Clock(true)
 
 let ship;
@@ -729,6 +739,8 @@ document.getElementById("load").addEventListener("change", function () {
 function animate() {
     requestAnimationFrame(animate)
 
+    doOnce.unlock()
+
     const dt = clock.getDelta()
 
     if (gameOver) {
@@ -766,9 +778,8 @@ function animate() {
             ll_debug.geometry.setAttribute("position", new BufferAttribute(debugRender.vertices, 2))
         }
 
-        let learned = false
         if (!ship._isDisposed)
-            learned = ship.update(dt)
+            ship.update(dt)
 
         /** @type {Bullet[]} */
         const bullets = scene.getObjectsByUserDataProperty("type", "bullet")
@@ -830,17 +841,13 @@ function animate() {
 
                 if (!(otherObj.userData.type === "asteroid" | otherObj.userData.type === "shippart")) {
                     // BUG: For whatever reason, the other object needs to take the hit first. I have no clue why.
-                    const res = otherObj.takeHit()
+                    otherObj.takeHit()
                     asteroid.takeHit()
-
-                    if (res)
-                        learned = true
                 }
             })
         }
 
-        if (!learned)
-            agent.learn(0)
+        doOnce.do(() => agent.learn(0))
 
         camera.position.copy(ship.position)
         camera.position.setZ(0.001)
