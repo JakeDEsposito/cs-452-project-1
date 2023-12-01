@@ -36,7 +36,8 @@ const agent = new RL.DQNAgent({
     getNumStates: () => RAYS_COUNT * 3 + 1 + 2 + 1,
     getMaxNumActions: () => 5
 }, {
-    alpha: 0.01
+    alpha: 0.01,
+    gamma: 0.9
 })
 
 const gpuTier = await getGPUTier()
@@ -44,6 +45,7 @@ const gpuTier = await getGPUTier()
 Howler.volume(0.4)
 
 const { randFloat, randInt, clamp, mapLinear } = MathUtils
+const { pow } = Math
 
 Array.prototype.random = function () {
     return this[randInt(0, this.length - 1)]
@@ -320,7 +322,20 @@ class Once {
     }
 }
 
+class Accumulator {
+    #count = 0
+
+    add = (x) => this.#count += x
+
+    flush() {
+        const c = this.#count
+        this.#count = 0
+        return c
+    }
+}
+
 const doOnce = new Once()
+const accumulator = new Accumulator()
 
 class Ship extends Physical {
     #rotateSpeed = 4.5
@@ -346,13 +361,7 @@ class Ship extends Physical {
         }
     }
 
-    #movement(dt) {
-        const { cos, sin } = Math
-
-        // if (keyHandler.isKeyPressed("w"))
-        //     this._rigidBody.applyImpulse(new Vector2(-sin(this.rotation.z), cos(this.rotation.z)).multiplyScalar(0.6), true)
-
-        // this.rotation.z += (keyHandler.isKeyPressed("a") - keyHandler.isKeyPressed("d")) * this.#rotateSpeed * dt
+    #movement() {
         this._rigidBody.setRotation(this.rotation.z, true)
 
         const { x, y } = this._rigidBody.translation()
@@ -444,8 +453,6 @@ class Ship extends Physical {
 
         const diff = new Vector2(sin(closestIndex * PI / 180), cos(closestIndex * PI / 180)).angleTo(new Vector2(sin(angle * PI / 180), cos(angle * PI / 180)))
 
-        console.log(diff)
-
         // When the diff is positive, you want to rotate clockwise.
         // When the diff is negative, you want to rotate couter clockwise.
 
@@ -475,52 +482,44 @@ class Ship extends Physical {
 
                         object.takeHit()
 
-                        doOnce.do(() => agent.learn(1))
+                        accumulator.add(1)
 
                         score++
                     }
                     else
-                        doOnce.do(() => agent.learn(-0.05))
+                        accumulator.add(-0.05)
 
                     this.#canFire = false
                     setTimeout(() => this.#canFire = true, this.#fireCooldown * 1000)
                 }
                 else {
-                    doOnce.do(() => agent.learn(-0.1))
+                    accumulator.add(-0.1)
                 }
                 break
             // There is a 5th action reserved for doing none of the above.
         }
 
         if (diff < 0.02 && this.#canFire)
-            doOnce.do(() => agent.learn(-1))
+            accumulator.add(-1)
 
         if (closest[0] < 0.5) {
             const _angle = ((-this.rotation.z * 180 / PI) + 360) % 360
             const _diff = new Vector2(sin(closestIndex * PI / 180), cos(closestIndex * PI / 180)).angleTo(new Vector2(sin(_angle * PI / 180), cos(_angle * PI / 180)))
             if (_diff < diff)
-                doOnce.do(() => agent.learn(0.01))
+                accumulator.add(mapLinear(clamp(pow(_diff, -1), 0, 200), 0, 200, 0, 0.8))
             else
-                doOnce.do(() => agent.learn(-0.01))
+                accumulator.add(-0.01)
         }
 
         // TODO: See if there is a way to look back and learn from previous steps.
 
-        this.#movement(dt)
-
-        // // TODO: Consider adding cooldown to shooting so that it wont get abused.
-        // if (this.#canFire && keyHandler.isKeyPressed(" ")) {
-        //     this.#fire()
-
-        //     this.#canFire = false
-        //     setTimeout(() => this.#canFire = true, this.#fireCooldown * 1000)
-        // }
+        this.#movement()
     }
 
     takeHit() {
         const priorHealth = this._health
 
-        doOnce.do(() => agent.learn(-1))
+        accumulator.add(-1)
 
         super.takeHit()
 
@@ -613,7 +612,7 @@ class Asteroid extends Physical {
         this.rotation.z = this._rigidBody.rotation()
     }
 
-    update(dt) {
+    update() {
         this.#movement()
     }
 
@@ -753,6 +752,7 @@ function animate() {
     requestAnimationFrame(animate)
 
     doOnce.unlock()
+    accumulator.flush()
 
     const dt = clock.getDelta()
 
@@ -836,7 +836,7 @@ function animate() {
                 continue
             }
 
-            asteroid.update(dt)
+            asteroid.update()
 
             world.contactsWith(asteroid._collider, ({ handle }) => {
                 if (asteroid._isDisposed)
@@ -860,7 +860,8 @@ function animate() {
             })
         }
 
-        doOnce.do(() => agent.learn(0))
+        const learned = accumulator.flush()
+        doOnce.do(() => agent.learn(learned))
 
         camera.position.copy(ship.position)
         camera.position.setZ(0.001)
