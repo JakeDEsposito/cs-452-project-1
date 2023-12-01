@@ -441,24 +441,23 @@ class Ship extends Physical {
 
         const closestIndex = r.indexOf(closest)
         const angle = ((-this.rotation.z * 180 / PI) + 360) % 360
-        const diff = closestIndex - angle
+
+        const diff = new Vector2(sin(closestIndex * PI / 180), cos(closestIndex * PI / 180)).angleTo(new Vector2(sin(angle * PI / 180), cos(angle * PI / 180)))
+
+        console.log(diff)
 
         // When the diff is positive, you want to rotate clockwise.
         // When the diff is negative, you want to rotate couter clockwise.
 
-        switch (1) {
+        switch (action) {
             case 0: // Move Forward
                 this._rigidBody.applyImpulse(new Vector2(-sin(this.rotation.z), cos(this.rotation.z)).multiplyScalar(0.6), true)
                 break
             case 1: // Rotate Counter Clockwise
                 this.rotation.z += this.#rotateSpeed * dt
-                if (diff < 0)
-                    doOnce.do(() => agent.learn(0.1))
                 break
             case 2: // Rotate Clockwise
                 this.rotation.z -= this.#rotateSpeed * dt
-                if (diff > 0)
-                    doOnce.do(() => agent.learn(0.1))
                 break
             case 3: // Shoot
                 if (this.#canFire) {
@@ -480,6 +479,8 @@ class Ship extends Physical {
 
                         score++
                     }
+                    else
+                        doOnce.do(() => agent.learn(-0.05))
 
                     this.#canFire = false
                     setTimeout(() => this.#canFire = true, this.#fireCooldown * 1000)
@@ -489,6 +490,18 @@ class Ship extends Physical {
                 }
                 break
             // There is a 5th action reserved for doing none of the above.
+        }
+
+        if (diff < 0.02 && this.#canFire)
+            doOnce.do(() => agent.learn(-1))
+
+        if (closest[0] < 0.5) {
+            const _angle = ((-this.rotation.z * 180 / PI) + 360) % 360
+            const _diff = new Vector2(sin(closestIndex * PI / 180), cos(closestIndex * PI / 180)).angleTo(new Vector2(sin(_angle * PI / 180), cos(_angle * PI / 180)))
+            if (_diff < diff)
+                doOnce.do(() => agent.learn(0.01))
+            else
+                doOnce.do(() => agent.learn(-0.01))
         }
 
         // TODO: See if there is a way to look back and learn from previous steps.
