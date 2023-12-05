@@ -31,7 +31,7 @@ The score is counted by how many asteroids the player has shot. An asteroid can 
 
 ## Code Structure
 
-Admittedly, this project is not very well orginized. All of the games code is written in a single file. This leads to somewhat messy code. Instead of explaining all aspects of the code, I will pick out a few aspects that I find to be the most interesting and talk about those.
+Admittedly, this project is not very well orginized. All of the game's code is written in a single file. This leads to somewhat messy code. Instead of explaining all aspects of the code, I will pick out a few aspects that I find to be the most interesting and talk about those.
 
 ### Physical
 
