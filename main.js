@@ -39,13 +39,16 @@ const agent = new RL.DQNAgent({
     alpha: 0.01,
     gamma: 0.9
 })
+const localTrainingData = localStorage.getItem("training data")
+if (localTrainingData)
+    agent.fromJSON(JSON.parse(localTrainingData))
 
 const gpuTier = await getGPUTier()
 
 Howler.volume(0.4)
 
 const { randFloat, randInt, clamp, mapLinear } = MathUtils
-const { pow } = Math
+const { pow, abs } = Math
 
 Array.prototype.random = function () {
     return this[randInt(0, this.length - 1)]
@@ -502,14 +505,17 @@ class Ship extends Physical {
         if (diff < 0.02 && this.#canFire)
             accumulator.add(-1)
 
-        if (closest[0] < 0.5) {
-            const _angle = ((-this.rotation.z * 180 / PI) + 360) % 360
-            const _diff = new Vector2(sin(closestIndex * PI / 180), cos(closestIndex * PI / 180)).angleTo(new Vector2(sin(_angle * PI / 180), cos(_angle * PI / 180)))
-            if (_diff < diff)
-                accumulator.add(mapLinear(clamp(pow(_diff, -1), 0, 200), 0, 200, 0, 0.8))
-            else
-                accumulator.add(-0.01)
-        }
+        const _angle = ((-this.rotation.z * 180 / PI) + 360) % 360
+        const _diff = new Vector2(sin(closestIndex * PI / 180), cos(closestIndex * PI / 180)).angleTo(new Vector2(sin(_angle * PI / 180), cos(_angle * PI / 180)))
+        accumulator.add(mapLinear(clamp(pow(_diff, -1), 0, 200), 0, 200, 0, 0.8) * (_diff < diff ? 1 : -1))
+
+        const shipVelHeading = new Vector2(this._rigidBody.linvel().x, this._rigidBody.linvel().y).normalize()
+        const closestVelHeading = new Vector2(closest[1], closest[2]).normalize()
+        // const oncomingTargetApproachAngleRadians = new Vector2(sin(closestIndex * PI / 180), cos(closestIndex * PI / 180)).angleTo(new Vector2(closest[1], closest[2]).normalize())
+        /*const oncomingTargetApproachAngleRadians = new Vector2(this._rigidBody.linvel().x, this._rigidBody.linvel().y).angleTo(new Vector2(closest[1], closest[2]).normalize())
+        if (oncomingTargetApproachAngleRadians > PI - 0.09 && oncomingTargetApproachAngleRadians < PI - 0.09) {
+            accumulator.add(-mapLinear(clamp(pow(abs(PI-oncomingTargetApproachAngleRadians), -1), 0, 200), 0, 200, 0, 0.6))
+        }*/
 
         // TODO: See if there is a way to look back and learn from previous steps.
 
@@ -748,6 +754,10 @@ document.getElementById("load").addEventListener("change", function () {
     file.text().then(text => agent.fromJSON(JSON.parse(text)))
 })
 
+setInterval(() => {
+    localStorage.setItem("training data", JSON.stringify(agent.toJSON()))
+}, 5000)
+
 function animate() {
     requestAnimationFrame(animate)
 
@@ -762,6 +772,11 @@ function animate() {
         for (const obj of objectsToUpdate) {
             obj.update()
         }
+
+        /** @type {Asteroid[]} */
+        const asteroids = scene.getObjectsByUserDataProperty("type", "asteroid")
+
+        asteroids.forEach(asteroid => asteroid.disposeSafe())
 
         if (true) {
             scene.getObjectsByUserDataName("type").forEach(obj => obj.disposeSafe())
@@ -814,7 +829,7 @@ function animate() {
 
             pos.add(new Vector3(randFloat(ASTEROIDS_SPAWN_DISTANCE_FROM_PLAYER_LOWER, ASTEROIDS_SPAWN_DISTANCE_FROM_PLAYER_UPPER), 0, 0).applyEuler(e))
 
-            const a = new Asteroid(m_green)
+            const a = new Asteroid(m_green, 1)
 
             a._rigidBody.setTranslation(pos)
 
